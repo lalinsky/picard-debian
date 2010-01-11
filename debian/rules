@@ -1,0 +1,63 @@
+#!/usr/bin/make -f
+
+PYVERS  = $(shell pyversions -rv)
+DESTDIR = $(CURDIR)/debian/picard
+
+CFLAGS = -Wall -g -O$(if $(findstring noopt,$(DEB_BUILD_OPTIONS)),0,2)
+
+build: $(PYVERS:%=build-stamp%)
+
+build-stamp%:
+	dh_testdir
+	echo "# let it installed by recent python-support" > picard/plugins/__init__.py
+	CFLAGS="$(CFLAGS)" python$* setup.py config
+	CFLAGS="$(CFLAGS)" python$* setup.py build_ext
+	python$* setup.py install --root=$(DESTDIR) --prefix=/usr \
+	  --no-compile --disable-autoupdate
+	rm -rf build/ build.cfg scripts/picard
+	touch $@
+
+clean:
+	dh_testdir
+	dh_testroot
+	> picard/plugins/__init__.py
+	rm -rf build/ build.cfg scripts/picard build-stamp*
+	find $(CURDIR) \( -name '*.mo' -o -name '*.pyc' \) -delete
+	dh_clean
+
+install: build
+	dh_testdir
+	dh_testroot
+	dh_installdirs
+	# Let's create some icons
+	mkdir -p $(DESTDIR)/usr/share/pixmaps
+	for size in 16 22 24 32; do \
+		convert $(CURDIR)/picard-32.png -resize $${size} $(DESTDIR)/usr/share/pixmaps/picard-$${size}.xpm || exit 1; \
+		mkdir -p $(DESTDIR)/usr/share/icons/hicolor/$${size}x$${size}/apps || exit 1;  \
+		convert $(CURDIR)/picard-32.png -resize $${size} $(DESTDIR)/usr/share/icons/hicolor/$${size}x$${size}/apps/picard.png || exit 1; \
+	done
+	# And fix the shebang
+	sed -i 's,^#!/usr/bin/python.*,#!/usr/bin/python,' $(DESTDIR)/usr/bin/picard
+
+binary-indep: build install
+binary-arch: build install
+	dh_testdir
+	dh_testroot
+	dh_installchangelogs -s NEWS.txt
+	dh_installdocs -s
+	dh_installmenu -s
+	dh_icons -s
+	dh_pysupport -s
+	dh_installman -s
+	dh_link -s
+	dh_strip -s
+	dh_compress -s
+	dh_fixperms -s
+	dh_installdeb -s
+	dh_shlibdeps -s
+	dh_gencontrol -s
+	dh_md5sums -s
+	dh_builddeb -s
+
+binary: binary-indep binary-arch
+.PHONY: build clean binary-indep binary-arch binary install

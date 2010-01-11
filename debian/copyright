@@ -1,0 +1,55 @@
+This package was debianized by Adam Cécile (Le_Vert) <gandalf@le-vert.net> on
+Mon,  6 Nov 2006 01:42:10 +0100.
+
+It was downloaded from http://musicbrainz.org/doc/PicardTagger
+
+Upstream Author: Robert Kaye <rob@eorbit.net>
+		 Robert Vollmert <rvollmert@gmx.net>
+		 Cody M. Bailey <codyb81@yahoo.com>
+		 Dave Evans <djce@musicbrainz.org>
+		 David Hull <dlhull@users.sourceforge.net>
+		 Lukáš Lalinský <lalinsky@gmail.com>
+		 Tobias Rundström <tru@xmms.org>
+		 Benbuck Nason
+		 Michael Urman
+
+Copyright: (C) 2008 Lukáš Lalinský
+           (C) 2004-2006, Robert Kaye
+	   (C) 1995-2002, RealNetworks
+	   Portions copyright by the other upstream authors (see above).
+
+picard is triple-licensed under 'GNU General Public License', 'RealNetworks
+Public Source License Version 1.0' and 'RealNetworks Community Source
+License Version 1.0'.
+
+You can choose, at your convenience, one of this three license.
+
+Debian packages chooses GPL, because the two other are not DFSG-compliant.
+
+License (GPL):
+
+   This package is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; either version 2 of the License, or
+   (at your option) any later version.
+
+   This package is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this package; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
+
+On Debian systems, the complete text of the GNU General
+Public License can be found in '/usr/share/common-licenses/GPL'.
+
+RealNetworks Public Source License Version 1.0 can be found at:
+'https://helixcommunity.org/content/rpsl'
+
+RealNetworks Community Source License Version 1.0 can be found at:
+'https://helixcommunity.org/content/rcsl'
+
+The Debian packaging is (C) 2006, Adam Cécile (Le_Vert) <gandalf@le-vert.net>
+and is licensed under the GPL, see above.
