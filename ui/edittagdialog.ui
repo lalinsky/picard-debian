@@ -1,0 +1,55 @@
+<ui version="4.0" >
+ <class>EditTagDialog</class>
+ <widget class="QDialog" name="EditTagDialog" >
+  <property name="geometry" >
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>384</width>
+    <height>225</height>
+   </rect>
+  </property>
+  <property name="windowTitle" >
+   <string>Edit Tag</string>
+  </property>
+  <layout class="QVBoxLayout" >
+   <property name="margin" >
+    <number>9</number>
+   </property>
+   <property name="spacing" >
+    <number>6</number>
+   </property>
+   <item>
+    <widget class="QComboBox" name="name" >
+     <property name="editable" >
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QTextEdit" name="value" >
+     <property name="tabChangesFocus" >
+      <bool>true</bool>
+     </property>
+     <property name="acceptRichText" >
+      <bool>false</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttonbox" >
+     <property name="orientation" >
+      <enum>Qt::Horizontal</enum>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <tabstops>
+  <tabstop>buttonbox</tabstop>
+  <tabstop>name</tabstop>
+  <tabstop>value</tabstop>
+ </tabstops>
+ <resources/>
+ <connections/>
+</ui>

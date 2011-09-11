@@ -1,0 +1,308 @@
+Version 0.11 - 2008-12-02
+ * Support for new FFmpeg install locations
+ * Automatically remove whitespaces from MB hostname in options
+ * Release date from MB is now optional
+ * Fixed per-track folksonomy tag support
+ * Evaluate tagger script for album metadata
+ * Show donation info in the about dialog
+ * Support for .oga files (Ogg FLAC, Ogg Speex or Ogg Vorbis)
+ * Fixed loading of performer tags from Vorbis Comments
+ * Load embedded cover art from COVERART/COVERARTMIME Vorbis Comments
+ * Allow setting the "Move Files To" location from the internal file browser
+ * Copy&paste support in the file details dialog
+ * Correct handling of "; " as a separator for sort names
+ * Minimal support for TAK files
+ * Fixed parsing of the "Pseudo-Release" release status
+ * Fixed reading performers with empty role from ID3 tags
+ * Don't allow empty file naming formats
+ * Interactive password dialog
+ * Fixed checking for non-Latin characters when using sort name as the main
+   artist name
+
+Version 0.10 - 2008-07-27
+ * Fixed crash when reading CD TOC on 64-bit systems
+ * Fixed handling of MP4 files with no metadata
+ * Change the hotkey for help to the right key for OS X
+ * Replace special characters after tagger script evalutaion to allow 
+   special characters being replaced by tagger script
+ * Actually ignore 'ignored (folksonomy) tags'
+ * Remove dependency on Mutagen 1.13, version 1.11 is enough now
+ * Escape ampersand in release selection (#3748)
+
+Version 0.10.0rc1 - 2008-05-25
+ * Stop analyzing files that have been removed. (#3352, Gary van der Merwe)
+ * Automatically disable CD lookup if no CD device is specified.
+   (Will Holcomb)
+ * Don't abort directory reading on invalid filename. (#2829, amckinle)
+ * Add an option to select multiple directories from the 'Add Directory'
+   window. (#3541, Will Holcomb)
+ * Avoid scanning files that had been removed from the tagger.
+   (#3352, Gary van der Merwe)
+ * Folksonomy tags/genre support. (Lukáš Lalinský)
+ * Added menu items (with keyboard shortcuts) for CD lookup / Scan /
+   Lookup / Cluster. (Lukáš Lalinský)
+ * Add taggerscript function $performer(). (Lukáš Lalinský)
+ * Lower the default PUID lookup threshold to 10%. (Lukáš Lalinský)
+ * Compare tracknumber and totaltracks as numbers, not strings.
+   (Lukáš Lalinský)
+ * Correctly escape special Lucene characters for searches/lookups.
+   (#3448, Lukáš Lalinský)
+ * Use MusicIP Mixer "archived analysis" to speed up PUID lookups.
+   (Lukáš Lalinský)
+ * Add language and script to variables. (#3635, Nikki)
+ * Option to initiate searches with advanced query syntax on by default.
+   (#3526, Lukáš Lalinský)
+ * "Save Tags" item in options menu. (#3519, Lukáš Lalinský)
+ * Create empty "plugins" directory by default on installation.
+   (#3529, Lukáš Lalinský)
+ * Added default release country option. (#3452, Philipp Wolfer)
+ * Added release format type to release selection. (#3074, Philipp Wolfer)
+ * Convert Vorbis tag "tracktotal" to "totaltracks" on load. (Philipp Wolfer)
+ * Save 'arranger' to ID3 tags. (Lukáš Lalinský)
+ * Store cover art in Ogg and FLAC files. (#3647, Hendrik van Antwerpen)
+ * Album title not updated when related 'Unkown files' are modified.
+   (#3682, Hendrik van Antwerpen)
+ * Match selected release event to existing files.
+   (#3687, Hendrik van Antwerpen)
+ * Allow multiple files to be linked to a single track.
+   (#3729, Gary van der Merwe)
+ * Don't use mmap to resize files on Windows. (Lukáš Lalinský)
+
+Version 0.9.0 - 2007-12-16
+ * More custom tags in MP4 files (compatible with MediaMonkey and Jaikoz) (#3379)
+ * Fixed MP4 fingerprinting on Windows. (#3454, #3374)
+ * Fixed CD lookups on Windows. (#3462, #3362, #3386)
+ * Set the %compilation% tag correctly. (#3263)
+ * Fixed location of saved cover art files. (#3345)
+ * The Picard window now won't start as hidden. (#2104, #2429)
+ * Fixed reading of length of MP3 files with VBRI headers. (#3409)
+ * Fixed WMA saving. (#3417)
+ * Fixed saving of comment to ID3 tags. (#3418)
+ * New mapping of "chorus master" AR to "conductor" tag.
+ * Fixed system-wide plugin path on Linux. (#3430)
+ * Use the earliest release date by default. (#3456)
+
+Version 0.9.0beta1 - 2007-10-28
+ * Save ASIN to MP4 files.
+ * Add a --disable-locales option to setup.py build. (Santiago M. Mola)
+ * New threading code, should make Picard crash less and be faster.
+ * Replace initial dot in file and directory names. (#3204, Philipp Wolfer)
+ * Fixed caps in the default cover art image. (#3242, Bogdan Butnaru)
+ * Fixed broken naming preview. (#3214, Daniel Bumke)
+ * Re-enable the drag/drop target indicators. (#3106)
+ * Fix adding files and directories from the command line. (#3075)
+ * Don't show the cover art box by default.
+ * Lookup files individually for "Unmatched Files", not as a cluster.
+
+Version 0.9.0alpha14 - 2007-08-05
+ * Fixed PUID submissions.
+ * Fixed drag&drop from Finder to Picard on Mac OS X.
+ * Don't save files from "Unmatched Files" when saving an album.
+ * Renamed "Analyze" to "Scan", to avoid confusion with MusicIP Mixer analysis.
+ * Added plugin API versioning. Plugins now need to define constant
+   PLUGIN_API_VERSIONS, otherwise they won't be loaded.
+ * Added option to overwrite cover art by default.
+ * Never wait more than second for the next HTTP request.
+ * Fixed setting of the "Move Tagged Files To" folder, if the name contains
+   non-ASCII characters.
+
+Version 0.9.0alpha13 - 2007-07-29
+ * Bug Fixes:
+   * Fixed drag&drop issue on Windows Vista.
+     http://forums.musicbrainz.org/viewtopic.php?id=693
+
+Version 0.9.0alpha12 - 2007-07-29
+ * Changes:
+   * "User directory" location changed:
+     - On Windows from "%HOMEPATH%\Local Settings\Application Data\MusicBrainz Picard"
+       to "%HOMEPATH%\Application Data\MusicBrainz\Picard"
+     - On UNIX from "~/.picard" to "$XDG_CONFIG_HOME/MusicBrainz/Picard"
+       (usually "~/.config/MusicBrainz/Picard")
+   * Picard no longer logs every action and doesn't saves the logs. To enable
+     more debug logging, use command line argument "-d" or "--debug" or
+     environment variable "PICARD_DEBUG".
+   * For plugins:
+     - metadata["~#length"] is now metadata.length
+     - metadata["~#artwork"] is now metadata.images    
+ * New Features:
+   * Save embedded images to MP4 files.
+   * Added option to select release events for albums.
+   * Added internal log viewer.
+   * Track and file context menu hooks for plugins.
+ * Bug Fixes:
+   * Deleting files from clusters increments total time rather than
+     decrementing it. (#2965)
+   * Update metadata boxes and cover art for selected items. (#2498)
+   * Display error message for tracks.
+   * Fixed drag-and-drop bugs on Mac OS X.
+   * Added %releasecountry% to the file renaming preview.
+   * Cluster multi-disc albums identified by tags, not (disc x). (#2555)
+
+Version 0.9.0alpha11 - 2007-05-27
+ * New Features:
+   * Added "Edit" button to the tag editor.
+ * Bug Fixes:
+   * Fixed initialization of gettext translations.
+
+Version 0.9.0alpha10 - 2007-05-27
+ * New Features:
+   * New TaggerScript function $len(text). (#2843)
+   * Don't compress huge ID3 frames. (#2850)
+   * Move "Add Cluster As Release" to a plugin.
+   * Allow horizontal scrollbar in the file browser panel. (#2856)
+   * Removed "Basic" tab from the "Details" window, "Advanced" tab renamed to "Metadata".
+   * The tag editor can be used to edit multiple files. (#2893)
+ * Bug Fixes:
+   * F1 for Help instead of CTRL+H on Windows and Linux. (#2485, Nikolai Prokoschenko)
+   * Tabbing focus transition from search isn't as expected. (#2546, Nikolai Prokoschenko)
+   * Display an error message if launching a web browser failed.
+   * Fixed web-service error caused PUID submissions.
+   * Change function $gt(), $gte(), $lt(), $lte() to compare numbers, not strings. (#2848)
+   * Fixed kfmclient launching under KDE/Python 2.5.
+   * Fixed similarity calculation of non-latin texts. (#2891)
+   * Don't try to auto-analyze files with "loading" errors. (#2862)
+
+Version 0.9.0alpha9 - 2007-05-12
+ * New Features:
+   * The tag editor now accepts free-text tag names.
+   * Load 'DJ-mixed by' AR data to %djmixer% tag.
+   * Load 'Mixed by' AR data to %mixer% tag.
+   * Delay the webservice client to do max. 1 request per second.
+   * Sort files in clusters by disc number, track number and file name. (#2547)
+   * Support for any text frame in special variable %_id3:%.
+   * Ignore empty ID3 text values.
+   * Windows installer:
+     * Removed DirectX-based decoder.
+     * FFmpeg compiled with AAC (faad2) support.
+ * Bug Fixes:
+   * Save XSOP frame to ID3v2.3 tags. (#2484)
+   * Use attributes like 'guest' or 'additional' also from generic performer ARs.
+   * Fixed capitalization of %releasetype% in file naming preview. (#2762)
+   * Fixed 'python setup.py build_ext' if py2app and setuptools are loaded.
+   * ID3v2.3 frame TDAT should be written in format DDMM, not MMDD. (#2770)
+   * Don't display an error on Ogg and FLAC files with no tags.
+   * Remove video files from the list of supported formats.
+   * Always use musicbrainz.org for PUID submissions. (#2764)
+   * Files/Pending Files count not reset/recalculated after removing files. (#2541)
+   * Removed files still get processed during fingerprinting. (#2738)
+   * Read only text values from APEv2 tags. (#2828)
+
+Version 0.9.0alpha8 - 2007-04-15
+ * New Features:
+   * Notification of changed files in releases. (#2632, #2702)
+ * Bux Fixes:
+   * Don't open the file for analyzing twice. (#2733, #2734)
+   * Save ASIN and release country to ID3 tags. (#2484, #2456)
+   * Variable %country% renamed to %releasecountry%.
+   * Save release country to MP4 and WMA tags.
+   * Don't take unsupported tags into account when checking if the
+     tags are 'complete' and the file should have 100% match. This
+     fixes problems with showing the green check-marks for file
+     with limited tag formats, like MP4 or WMA.
+   * Ignore missing tag in $unset().
+
+Version 0.9.0alpha7 - 2007-04-14
+ * New Features
+   * Remember location in the file browser. (#2618)
+   * Added FFmpeg support on Windows (MP3, Vorbis,
+     FLAC, WavPack and many other audio formats).
+   * Lowercase the extension on file renaming/moving. (#2701)
+   * TaggerScript function `$copy(new,old)` to copy metadata from
+     variable `old` to `new`. The difference between `$set(new,%old%)`
+     is that `$copy(new,old)` copies multi-value variables without
+     flattening them.
+   * Added special purpose TaggerScript variable `%_id3:%` for direct
+     setting of ID3 frames. Currently it supports only TXXX frames in format
+     `%_id3:TXXX:<description>%`, for example:
+     `$copy(_id3:TXXX:PERFORMERSORTORDER,artistsort)`.
+   * Support for WAV files. (#2537)
+   * Removed GStreamer-based decoder.
+   * Implemented `python setup.py install_locales`.
+ * Bug Fixes:
+   * Failed PUID submission deactivates the submit button. (#2673)
+   * Unable to specify album art file name mask. (#2655)
+   * Fixed incorrect copying of album metadata to tracks. (#2698)
+   * Added options to un-hide toolbars. (#2631)
+   * Fixed problem with saving extra performer FLAC tags
+     containing non-ASCII characters. (#2719)
+   * Read only the first date from ID3v2.3 tags. (#2460)
+   * If the remembered directory for add dialogs and file browser was
+     removed, try to find an existing directory in the same path.
+
+Version 0.9.0alpha6 - 2007-04-04
+ * New Features:
+   * Added option --disable-autoupdate for 'build' and 'install' commands
+     of the setup script. (#2551)
+   * Automatically parse track numbers from file names like 01.flac for better
+     cluster->album matching with untagged files.
+   * Support for the new sorting tags in MP4 tags from iTunes 7.1.
+   * Strip white-space from directory names. (#2558)
+   * When replacing characters with their ascii equivalent, 'ß' should be
+     replaced by 'ss'. (#2610)
+   * Track level performer ARs. (#2561)
+   * Remove leading and trailing whitespace from tags on file saving.
+     (#892, #2665)
+   * Support for labels, catalog numbers and barcodes.
+ * Bug Fixes:
+   * Artist names from ARs should be translated, too.
+   * Freeze after answering no to "download the new version" prompt. (#2542)
+   * %musicbrainz_albumid% not working in file renaming. (#2543)
+   * Track time appears to display incorrectly if it's unknown on
+     MusicBrainz. (#2548)
+   * Fixed problem with removing albums/files after submitting PUIDs (#2556)
+   * The user's script should be applied also to album metadata.
+   * Fixed moving of additional files from paths with "special" characters.
+ * Internals:
+   * The browser integration HTTP server rewritten using QTcpServer.
+
+Version 0.9.0alpha5 - 2007-03-18
+ * New Features:
+   * Replace Æ with AE in file/directory names. (#2512)
+   * "Add cluster as release" (#1049)
+   * Text labels under icon buttons. (#2476)
+ * Bug Fixes:
+   * Fixed fileId generator (caused problems with drag&drop
+     if files with multiple formats are used).
+   * Original Metadata not greyed out when no tracks are attached. (#2461)
+   * Better detecting of the default Windows browser, with fallback to
+     Internet Explorer. (#2502)
+   * Better album/track lookup. (#2521)
+   * File browser stays 'hidden' after first time use. (#2480)
+   * Track length changed in Original Metadata after save. (#2510)
+   * "Send PUIDs" button not disabled after albums are removed. (#2506)
+   * The Windows package now includes JPEG loader to show cover art
+     images correctly. (#2478)
+
+Version 0.9.0alpha4 - 2007-03-09
+ * Bug Fixes:
+   * Fixed case-insentive file renaming. (#2457, #2513)
+
+Version 0.9.0alpha3 - 2007-03-08
+ * New Features:
+   * Using of 'performed by' AR types (without instrument or vocal).
+   * The "Replace non-ASCII characters" option will try to remove
+     accents first. (#2466)
+   * Added option to auto-analyze all files. (#2465)
+ * Bug Fixes:
+   * Fixed file clustering.
+   * Added %albumartistsort%, %releasetype% and %releasestatus% to the
+     file naming example (#2458)
+   * Sanitize dates from ID3 tags. (#2460)
+   * Fixed page switching in the options window on error. (#2455)
+   * Correct case-insensitive file renaming on Windows (#1003, #2457)
+   * Relative paths in the 'Move files to' option are relative to the
+     current path of the file. (#2454)
+   * Added a .desktop file. (#2470)
+   * Release type and status should be in lower case. (#2489)
+
+Version 0.9.0alpha2 - 2007-03-04
+ * New Features:
+   * New variable %_extension% (#2447)
+   * File naming format tester. (#2448)
+   * Added automatic checking for new versions.
+ * Bug Fixes:
+   * Fixed window position saving/restoring. (#2449)
+   * Fixed iTunes compilation flag saving. (#2450)
+
+Version 0.9.0alpha1 - 2007-03-03
+ * First release.

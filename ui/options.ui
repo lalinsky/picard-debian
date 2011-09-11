@@ -1,0 +1,42 @@
+<ui version="4.0" >
+ <class>Dialog</class>
+ <widget class="QDialog" name="Dialog" >
+  <property name="geometry" >
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>485</width>
+    <height>398</height>
+   </rect>
+  </property>
+  <property name="windowTitle" >
+   <string>Options</string>
+  </property>
+  <layout class="QVBoxLayout" >
+   <property name="margin" >
+    <number>9</number>
+   </property>
+   <property name="spacing" >
+    <number>6</number>
+   </property>
+   <item>
+    <widget class="QSplitter" name="splitter" >
+     <property name="orientation" >
+      <enum>Qt::Horizontal</enum>
+     </property>
+     <widget class="QTreeWidget" name="pages_tree" />
+     <widget class="QStackedWidget" name="pages_stack" />
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttonbox" >
+     <property name="orientation" >
+      <enum>Qt::Horizontal</enum>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

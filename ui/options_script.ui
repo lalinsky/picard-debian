@@ -1,0 +1,62 @@
+<ui version="4.0" >
+ <class>ScriptingOptionsPage</class>
+ <widget class="QWidget" name="ScriptingOptionsPage" >
+  <property name="geometry" >
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>222</width>
+    <height>228</height>
+   </rect>
+  </property>
+  <layout class="QVBoxLayout" >
+   <property name="margin" >
+    <number>9</number>
+   </property>
+   <property name="spacing" >
+    <number>6</number>
+   </property>
+   <item>
+    <widget class="QGroupBox" name="enable_tagger_script" >
+     <property name="title" >
+      <string>Tagger Script</string>
+     </property>
+     <property name="checkable" >
+      <bool>true</bool>
+     </property>
+     <layout class="QVBoxLayout" >
+      <property name="margin" >
+       <number>9</number>
+      </property>
+      <property name="spacing" >
+       <number>6</number>
+      </property>
+      <item>
+       <widget class="QTextEdit" name="tagger_script" >
+        <property name="font" >
+         <font>
+          <family>Courier</family>
+          <pointsize>8</pointsize>
+          <weight>50</weight>
+          <italic>false</italic>
+          <bold>false</bold>
+          <underline>false</underline>
+          <strikeout>false</strikeout>
+         </font>
+        </property>
+        <property name="lineWrapMode" >
+         <enum>QTextEdit::NoWrap</enum>
+        </property>
+        <property name="acceptRichText" >
+         <bool>false</bool>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

@@ -1,0 +1,60 @@
+<ui version="4.0" >
+ <class>InterfaceOptionsPage</class>
+ <widget class="QWidget" name="InterfaceOptionsPage" >
+  <property name="geometry" >
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>276</width>
+    <height>196</height>
+   </rect>
+  </property>
+  <layout class="QVBoxLayout" >
+   <item>
+    <widget class="QGroupBox" name="groupBox_2" >
+     <property name="title" >
+      <string>Miscellaneous</string>
+     </property>
+     <layout class="QVBoxLayout" >
+      <item>
+       <widget class="QCheckBox" name="toolbar_show_labels" >
+        <property name="text" >
+         <string>Show text labels under icons</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="toolbar_multiselect" >
+        <property name="text" >
+         <string>Allow selection of multiple directories</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="use_adv_search_syntax" >
+        <property name="text" >
+         <string>Use advanced query syntax</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <spacer>
+     <property name="orientation" >
+      <enum>Qt::Vertical</enum>
+     </property>
+     <property name="sizeHint" >
+      <size>
+       <width>220</width>
+       <height>61</height>
+      </size>
+     </property>
+    </spacer>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
