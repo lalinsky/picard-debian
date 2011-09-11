@@ -31,10 +31,13 @@ install: build
 	dh_installdirs
 	# Let's create some icons
 	mkdir -p $(DESTDIR)/usr/share/pixmaps
-	for size in 16 22 24 32; do \
-		convert $(CURDIR)/picard-32.png -resize $${size} $(DESTDIR)/usr/share/pixmaps/picard-$${size}.xpm || exit 1; \
+	for size in 22; do \
+		convert $(CURDIR)/resources/images/32x32/picard.png -resize $${size} $(DESTDIR)/usr/share/pixmaps/picard-$${size}.xpm || exit 1; \
 		mkdir -p $(DESTDIR)/usr/share/icons/hicolor/$${size}x$${size}/apps || exit 1;  \
-		convert $(CURDIR)/picard-32.png -resize $${size} $(DESTDIR)/usr/share/icons/hicolor/$${size}x$${size}/apps/picard.png || exit 1; \
+		convert $(CURDIR)/resources/images/32x32/picard.png -resize $${size} $(DESTDIR)/usr/share/icons/hicolor/$${size}x$${size}/apps/picard.png || exit 1; \
+	done
+	for size in 16 24 32; do \
+		convert $(CURDIR)/resources/images/$${size}x$${size}/picard.png $(DESTDIR)/usr/share/pixmaps/picard-$${size}.xpm || exit 1; \
 	done
 	# And fix the shebang
 	sed -i 's,^#!/usr/bin/python.*,#!/usr/bin/python,' $(DESTDIR)/usr/bin/picard

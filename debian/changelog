@@ -1,8 +1,13 @@
 picard (0.15.1-1) unstable; urgency=low
 
-  * New maintainer (Closes: #XXX)
-  * New upstream release
-  * Update standards version to 3.9.1
+  * New maintainer (Closes: #123)
+  * New upstream release (Closes: #554528)
+    - Compatibility with recent FFmpeg (Closes: #638244, #640549)
+    - Fixed memory alignment issue which caused to a crash (Closes: #537082)
+    - Support for sorting by title/artist (Closes: #583847)
+    - Multi-disc album support (Closes: 583511)
+  * Update Standards-Version to 3.9.1
+  * Remove XB-Python-Versions
 
  -- Lukáš Lalinský <lalinsky@gmail.com>  Sun, 11 Sep 2011 18:46:54 +0200
 

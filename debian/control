@@ -14,7 +14,8 @@ Build-Depends: debhelper (>= 5.0.51~),
 Standards-Version: 3.9.1
 Homepage: http://musicbrainz.org/doc/MusicBrainz_Picard
 XS-Python-Version: >= 2.5
-XB-Python-Version: ${python:Versions}
+Vcs-Git: git://github.com/lalinsky/picard-debian.git
+Vcs-Browser: http://github.com/lalinsky/picard-debian
 
 Package: picard
 Architecture: any
