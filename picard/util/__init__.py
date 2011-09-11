@@ -24,11 +24,39 @@ import sys
 import unicodedata
 from PyQt4 import QtCore
 from encodings import rot_13;
+from string import Template
+
+
+def asciipunct(s):
+    mapping = {
+        u"…": u"...",
+        u"‘": u"'",
+        u"’": u"'",
+        u"‚": u"'",
+        u"“": u"\"",
+        u"”": u"\"",
+        u"„": u"\"",
+        u"′": u"'",
+        u"″": u"\"",
+        u"‹": u"<",
+        u"›": u">",
+        u"«": u"<<",
+        u"»": u">>",
+        u"‐": u"-",
+        u"‒": u"-",
+        u"–": u"-",
+        u"−": u"-",
+        u"—": u"-",
+        u"―": u"--",
+    }
+    for orig, repl in mapping.iteritems():
+        s = s.replace(orig, repl)
+    return s
 
 
 def needs_read_lock(func):
     """Adds a read lock around ``func``.
-    
+
     This decorator should be used only on ``LockableObject`` methods."""
     def locked(self, *args, **kwargs):
         self.lock_for_read()
@@ -43,7 +71,7 @@ def needs_read_lock(func):
 
 def needs_write_lock(func):
     """Adds a write lock around ``func``.
-    
+
     This decorator should be used only on ``LockableObject`` methods."""
     def locked(self, *args, **kwargs):
         self.lock_for_write()
@@ -94,7 +122,26 @@ class LockableDict(dict):
         self.__lock.unlock()
 
 
-_io_encoding = sys.getfilesystemencoding() 
+_io_encoding = sys.getfilesystemencoding()
+
+#The following was adapted from k3b's source code:
+#// On a glibc system the system locale defaults to ANSI_X3.4-1968
+#// It is very unlikely that one would set the locale to ANSI_X3.4-1968
+#// intentionally
+if _io_encoding == "ANSI_X3.4-1968":
+    print """
+System locale charset is ANSI_X3.4-1968
+Your system's locale charset (i.e. the charset used to encode filenames)
+is set to ANSI_X3.4-1968. It is highly unlikely that this has been done
+intentionally. Most likely the locale is not set at all. An invalid setting
+will result in problems when creating data projects.
+To properly set the locale charset make sure the LC_* environment variables
+are set. Normally the distribution setup tools take care of this.
+
+Translation: Picard will have problems with non-english characters
+               in filenames until you change your charset.
+"""
+
 
 def set_io_encoding(encoding):
     """Sets the encoding used in file names."""
@@ -103,7 +150,7 @@ def set_io_encoding(encoding):
 def encode_filename(filename):
     """Encode unicode strings to filesystem encoding."""
     if isinstance(filename, unicode):
-        if os.path.supports_unicode_filenames:
+        if os.path.supports_unicode_filenames and sys.platform != "darwin":
             return filename
         else:
             return filename.encode(_io_encoding, 'replace')
@@ -125,11 +172,11 @@ def format_time(ms):
     if ms == 0:
         return "?:??"
     else:
-        return "%d:%02d" % (ms / 60000, (ms / 1000) % 60)
+        return "%d:%02d" % (round(ms / 1000.0) / 60, round(ms / 1000.0) % 60)
 
 def sanitize_date(datestr):
     """Sanitize date format.
-    
+
     e.g.: "YYYY-00-00" -> "YYYY"
           "YYYY-  -  " -> "YYYY"
           ...
@@ -177,18 +224,26 @@ def replace_win32_incompat(string, repl=u"_"):
 _re_non_alphanum = re.compile(r'\W+', re.UNICODE)
 def strip_non_alnum(string):
     """Remove all non-alphanumeric characters from ``string``."""
-    return _re_non_alphanum.sub(u" ", string)
+    return _re_non_alphanum.sub(u" ", string).strip()
 
 _re_slashes = re.compile(r'[\\/]', re.UNICODE)
 def sanitize_filename(string, repl="_"):
     return _re_slashes.sub(repl, string)
 
-def make_short_filename(prefix, filename, length=240, max_length=200,
+def make_short_filename(prefix, filename, max_path_length=240, max_length=200,
                         mid_length=32, min_length=2):
+    """
+    Attempts to shorten the file name to the maximum allowed length.
+
+    max_path_length: The maximum length of the complete path.
+    max_length: The maximum length of a single file or directory name.
+    mid_length: The medium preferred length of a single file or directory.
+    min_length: The minimum allowed length of a single file or directory.
+    """
     parts = [part.strip() for part in _re_slashes.split(filename)]
     parts.reverse()
     filename = os.path.join(*parts)
-    left = len(prefix) + len(filename) + 1 - length
+    left = len(prefix) + len(filename) + 1 - max_path_length
 
     for i in range(len(parts)):
         left -= max(0, len(parts[i]) - max_length)
@@ -238,7 +293,7 @@ def translate_artist(name, sortname):
     for c in name:
         ctg = unicodedata.category(c)
         if ctg[0] == "L" and unicodedata.name(c).find("LATIN") == -1:
-            for separator in (" & ", "; "):
+            for separator in (" & ", "; ", " and ", " vs. ", " with ", " y "):
                 if separator in sortname:
                     parts = sortname.split(separator)
                     break
@@ -288,5 +343,24 @@ def call_next(func):
     func_wrapper.__name__ = func.__name__
     return func_wrapper
 
+
+_mbid_format = Template('$h{8}-$h$l-$h$l-$h$l-$h{12}').safe_substitute(h='[0-9a-fA-F]', l='{4}')
+_re_mbid_val = re.compile(_mbid_format)
+def mbid_validate(string):
+    return _re_mbid_val.match(string)
+
+
 def rot13(input):
     return u''.join(unichr(rot_13.encoding_map.get(ord(c), ord(c))) for c in input)
+
+
+def load_release_type_scores(setting):
+    scores = {}
+    values = setting.split()
+    for i in range(0, len(values), 2):
+        scores[values[i]] = float(values[i+1]) if i+1 < len(values) else 0.0
+    return scores
+
+
+def save_release_type_scores(scores):
+    return " ".join(["%s %.2f" % v for v in scores.iteritems()])

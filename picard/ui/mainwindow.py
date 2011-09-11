@@ -20,9 +20,7 @@
 from PyQt4 import QtCore, QtGui
 
 import os.path
-import sys
 
-from picard import __version__
 from picard.album import Album
 from picard.file import File
 from picard.track import Track
@@ -39,6 +37,12 @@ from picard.ui.tageditor import TagEditor
 from picard.ui.passworddialog import PasswordDialog
 from picard.util import icontheme, webbrowser2, find_existing_path
 from picard.util.cdrom import get_cdrom_drives
+from picard.plugin import ExtensionPoint
+import picard.musicdns
+
+ui_init = ExtensionPoint()
+def register_ui_init (function):
+    ui_init.register(function.__module__, function)
 
 class MainWindow(QtGui.QMainWindow):
 
@@ -47,7 +51,7 @@ class MainWindow(QtGui.QMainWindow):
                QtCore.QVariant.toByteArray),
         Option("persist", "window_position", QtCore.QPoint(),
                QtCore.QVariant.toPoint),
-        Option("persist", "window_size", QtCore.QSize(780, 580),
+        Option("persist", "window_size", QtCore.QSize(780, 560),
                QtCore.QVariant.toSize),
         BoolOption("persist", "window_maximized", False),
         BoolOption("persist", "view_cover_art", False),
@@ -63,8 +67,12 @@ class MainWindow(QtGui.QMainWindow):
     def setupUi(self):
         self.setWindowTitle(_("MusicBrainz Picard"))
         icon = QtGui.QIcon()
-        icon.addFile(":/images/Picard16.png", QtCore.QSize(16, 16))
-        icon.addFile(":/images/Picard32.png", QtCore.QSize(32, 32))
+        icon.addFile(":/images/16x16/picard.png", QtCore.QSize(16, 16))
+        icon.addFile(":/images/24x24/picard.png", QtCore.QSize(24, 24))
+        icon.addFile(":/images/32x32/picard.png", QtCore.QSize(32, 32))
+        icon.addFile(":/images/48x48/picard.png", QtCore.QSize(48, 48))
+        icon.addFile(":/images/128x128/picard.png", QtCore.QSize(128, 128))
+        icon.addFile(":/images/256x256/picard.png", QtCore.QSize(256, 256))
         self.setWindowIcon(icon)
 
         self.create_actions()
@@ -105,6 +113,9 @@ class MainWindow(QtGui.QMainWindow):
         # FIXME: use QApplication's clipboard
         self._clipboard = []
 
+        for function in ui_init:
+            function(self)
+
         self.restoreWindowState()
 
     def closeEvent(self, event):
@@ -133,11 +144,12 @@ class MainWindow(QtGui.QMainWindow):
     def restoreWindowState(self):
         self.restoreState(self.config.persist["window_state"])
         pos = self.config.persist["window_position"]
-        if pos.x() > 0 and pos.y() > 0:
-            self.move(pos)
         size = self.config.persist["window_size"]
+        self._desktopgeo = self.tagger.desktop().screenGeometry()
+        if pos.x() > 0 and pos.y() > 0 and pos.x()+size.width() < self._desktopgeo.width() and pos.y()+size.height() < self._desktopgeo.height():
+            self.move(pos)
         if size.width() <= 0 or size.height() <= 0:
-            size = QtCore.QSize(780, 580)
+            size = QtCore.QSize(780, 560)
         self.resize(size)
         if self.config.persist["window_maximized"]:
             self.setWindowState(QtCore.Qt.WindowMaximized)
@@ -149,18 +161,18 @@ class MainWindow(QtGui.QMainWindow):
         self.file_counts_label = QtGui.QLabel()
         self.statusBar().addPermanentWidget(self.file_counts_label)
         self.connect(self.tagger, QtCore.SIGNAL("file_state_changed"), self.update_statusbar)
-        self.update_statusbar()
+        self.update_statusbar(0)
 
-    def update_statusbar(self):
+    def update_statusbar(self, num_pending_files):
         """Updates the status bar information."""
-        self.file_counts_label.setText(" Files: %d, Pending Files: %d " % (
-            self.tagger.num_files(),
-            self.tagger.num_pending_files()))
+        self.file_counts_label.setText(_(" Files: %(files)d, Pending Files: %(pending)d ")
+            % {"files": self.tagger.num_files(), "pending": num_pending_files})
 
     def set_statusbar_message(self, message, *args, **kwargs):
         """Set the status bar message."""
         try:
-            self.log.debug(repr(message.replace('%%s', '%%r')), *args)
+            if message:
+                self.log.debug(repr(message.replace('%%s', '%%r')), *args)
         except:
             pass
         self.tagger.thread_pool.call_from_thread(
@@ -184,24 +196,18 @@ class MainWindow(QtGui.QMainWindow):
         self.connect(self.options_action, QtCore.SIGNAL("triggered()"), self.show_options)
 
         self.cut_action = QtGui.QAction(icontheme.lookup('edit-cut', icontheme.ICON_SIZE_MENU), _(u"&Cut"), self)
-        self.cut_action.setShortcut(QtGui.QKeySequence(_(u"Ctrl+X")))
+        self.cut_action.setShortcut(QtGui.QKeySequence.Cut)
         self.cut_action.setEnabled(False)
         self.connect(self.cut_action, QtCore.SIGNAL("triggered()"), self.cut)
 
         self.paste_action = QtGui.QAction(icontheme.lookup('edit-paste', icontheme.ICON_SIZE_MENU), _(u"&Paste"), self)
-        self.paste_action.setShortcut(QtGui.QKeySequence(_(u"Ctrl+V")))
+        self.paste_action.setShortcut(QtGui.QKeySequence.Paste)
         self.paste_action.setEnabled(False)
         self.connect(self.paste_action, QtCore.SIGNAL("triggered()"), self.paste)
 
         self.help_action = QtGui.QAction(_("&Help..."), self)
 
-        # Windows, KDE and Gnome HID use F1 for this. MacOSX seems to have Cmd-H as a standard
-        if sys.platform == "darwin":
-            help_shortcut = "Ctrl+?"
-        else:
-            help_shortcut = "F1"
-
-        self.help_action.setShortcut(QtGui.QKeySequence(_(help_shortcut)))
+        self.help_action.setShortcut(QtGui.QKeySequence.HelpContents)
         self.connect(self.help_action, QtCore.SIGNAL("triggered()"), self.show_help)
 
         self.about_action = QtGui.QAction(_("&About..."), self)
@@ -219,7 +225,7 @@ class MainWindow(QtGui.QMainWindow):
         self.add_files_action = QtGui.QAction(icontheme.lookup('document-open'), _(u"&Add Files..."), self)
         self.add_files_action.setStatusTip(_(u"Add files to the tagger"))
         # TR: Keyboard shortcut for "Add Files..."
-        self.add_files_action.setShortcut(QtGui.QKeySequence(_(u"Ctrl+O")))
+        self.add_files_action.setShortcut(QtGui.QKeySequence.Open)
         self.connect(self.add_files_action, QtCore.SIGNAL("triggered()"), self.add_files)
 
         self.add_directory_action = QtGui.QAction(icontheme.lookup('folder'), _(u"A&dd Folder..."), self)
@@ -232,7 +238,7 @@ class MainWindow(QtGui.QMainWindow):
         self.save_action = QtGui.QAction(icontheme.lookup('document-save'), _(u"&Save"), self)
         self.save_action.setStatusTip(_(u"Save selected files"))
         # TR: Keyboard shortcut for "Save"
-        self.save_action.setShortcut(QtGui.QKeySequence(_(u"Ctrl+S")))
+        self.save_action.setShortcut(QtGui.QKeySequence.Save)
         self.save_action.setEnabled(False)
         self.connect(self.save_action, QtCore.SIGNAL("triggered()"), self.save)
 
@@ -244,12 +250,11 @@ class MainWindow(QtGui.QMainWindow):
         self.exit_action = QtGui.QAction(_(u"E&xit"), self)
         # TR: Keyboard shortcut for "Exit"
         self.exit_action.setShortcut(QtGui.QKeySequence(_(u"Ctrl+Q")))
-        self.connect(self.exit_action, QtCore.SIGNAL("triggered()"),
-                     self.close)
+        self.connect(self.exit_action, QtCore.SIGNAL("triggered()"), self.close)
 
         self.remove_action = QtGui.QAction(icontheme.lookup('list-remove'), _(u"&Remove"), self)
         self.remove_action.setStatusTip(_(u"Remove selected files/albums"))
-        self.remove_action.setShortcut(QtGui.QKeySequence("Del"))
+        self.remove_action.setShortcut(QtGui.QKeySequence.Delete)
         self.remove_action.setEnabled(False)
         self.connect(self.remove_action, QtCore.SIGNAL("triggered()"), self.remove)
 
@@ -257,6 +262,7 @@ class MainWindow(QtGui.QMainWindow):
         self.show_file_browser_action.setCheckable(True)
         if self.config.persist["view_file_browser"]:
             self.show_file_browser_action.setChecked(True)
+        self.show_file_browser_action.setShortcut(QtGui.QKeySequence(_(u"Ctrl+B")))
         self.connect(self.show_file_browser_action, QtCore.SIGNAL("triggered()"), self.show_file_browser)
 
         self.show_cover_art_action = QtGui.QAction(_(u"&Cover Art"), self)
@@ -297,6 +303,8 @@ class MainWindow(QtGui.QMainWindow):
 
         self.edit_tags_action = QtGui.QAction(icontheme.lookup('picard-edit-tags'), _(u"&Details..."), self)
         self.edit_tags_action.setEnabled(False)
+        # TR: Keyboard shortcut for "Details"
+        self.edit_tags_action.setShortcut(QtGui.QKeySequence(_(u"Ctrl+I")))
         self.connect(self.edit_tags_action, QtCore.SIGNAL("triggered()"), self.edit_tags)
 
         self.refresh_action = QtGui.QAction(icontheme.lookup('view-refresh', icontheme.ICON_SIZE_MENU), _("&Refresh"), self)
@@ -327,6 +335,7 @@ class MainWindow(QtGui.QMainWindow):
         self.connect(self.view_log_action, QtCore.SIGNAL("triggered()"), self.show_log)
 
         self.connect(self.tagger.xmlws, QtCore.SIGNAL("authentication_required"), self.show_password_dialog)
+        self.connect(self.tagger.xmlws, QtCore.SIGNAL("proxyAuthentication_required"), self.show_proxy_dialog)
 
     def toggle_rename_files(self, checked):
         self.config.setting["rename_files"] = checked
@@ -396,9 +405,7 @@ class MainWindow(QtGui.QMainWindow):
             self.toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonTextUnderIcon)
         else:
             self.toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
-        
         self.cd_lookup_action.setEnabled(len(get_cdrom_drives()) > 0)
-
 
     def create_toolbar(self):
         self.toolbar = toolbar = self.addToolBar(_(u"&Toolbar"))
@@ -422,9 +429,9 @@ class MainWindow(QtGui.QMainWindow):
             button.setPopupMode(QtGui.QToolButton.MenuButtonPopup)
             button.setMenu(self.cd_lookup_menu)
 
+        toolbar.addAction(self.cluster_action)
         toolbar.addAction(self.autotag_action)
         toolbar.addAction(self.analyze_action)
-        toolbar.addAction(self.cluster_action)
         toolbar.addAction(self.edit_tags_action)
         toolbar.addAction(self.remove_action)
         self.search_toolbar = toolbar = self.addToolBar(_(u"&Search Bar"))
@@ -507,7 +514,7 @@ class MainWindow(QtGui.QMainWindow):
         elif len(dir_list) > 1:
             (parent, dir) = os.path.split(str(dir_list[0]))
             self.config.persist["current_directory"] = parent
-            
+
         for directory in dir_list:
             directory = unicode(directory)
             self.tagger.add_directory(directory)
@@ -535,7 +542,7 @@ class MainWindow(QtGui.QMainWindow):
         dialog.exec_()
 
     def show_help(self):
-        webbrowser2.open("http://musicbrainz.org/doc/PicardDocumentation")
+        webbrowser2.open("http://musicbrainz.org/doc/Picard_Documentation")
 
     def show_log(self):
         from picard.ui.logview import LogView
@@ -543,17 +550,7 @@ class MainWindow(QtGui.QMainWindow):
         w.show()
 
     def open_bug_report(self):
-        args = [
-            "component=Picard+Tagger",
-            "version=Picard+" + __version__,
-        ]
-        if sys.platform == "linux2":
-            args.append("os=Linux")
-        elif sys.platform == "win32":
-            args.append("os=Windows+XP")
-        elif sys.platform == "darwin":
-            args.append("os=Mac+OS+X")
-        webbrowser2.open("http://bugs.musicbrainz.org/newticket?" + "&".join(args))
+        webbrowser2.open("http://musicbrainz.org/doc/Picard_Troubleshooting")
 
     def open_support_forum(self):
         webbrowser2.open("http://forums.musicbrainz.org/viewforum.php?id=2")
@@ -593,7 +590,7 @@ class MainWindow(QtGui.QMainWindow):
         can_refresh = False
         can_autotag = False
         for obj in self.selected_objects:
-            if obj.can_analyze():
+            if picard.musicdns.ofa and obj.can_analyze():
                 can_analyze = True
             if obj.can_save():
                 can_save = True
@@ -603,10 +600,11 @@ class MainWindow(QtGui.QMainWindow):
                 can_edit_tags = True
             if obj.can_refresh():
                 can_refresh = True
-            if can_save and can_remove and can_edit_tags and can_refresh:
+            if obj.can_autotag():
+                can_autotag = True
+            if can_save and can_remove and can_edit_tags and can_refresh \
+                    and can_autotag:
                 break
-        # FIXME
-        can_autotag = can_remove
         self.remove_action.setEnabled(can_remove)
         self.save_action.setEnabled(can_save)
         self.edit_tags_action.setEnabled(can_edit_tags)
@@ -638,19 +636,22 @@ class MainWindow(QtGui.QMainWindow):
                     statusBar += _(" (Error: %s)") % obj.error
                 file = obj
             elif isinstance(obj, Track):
-                if len(obj.linked_files) == 1:
+                if obj.num_linked_files == 1:
                     file = obj.linked_files[0]
                     orig_metadata = file.orig_metadata
                     metadata = file.metadata
                     statusBar = "%s (%d%%)" % (file.filename, file.similarity * 100)
                     if file.state == file.ERROR:
                         statusBar += _(" (Error: %s)") % file.error
-                elif len(obj.linked_files) == 0:
+                elif obj.num_linked_files == 0:
                     metadata = obj.metadata
                 else:
                     metadata = obj.metadata
                     #Show dup zaper
-            elif isinstance(obj, (Cluster, Album)):
+            elif isinstance(obj, Cluster):
+                orig_metadata = obj.metadata
+                is_album = True
+            elif isinstance(obj, Album):
                 metadata = obj.metadata
                 is_album = True
 
@@ -677,8 +678,12 @@ class MainWindow(QtGui.QMainWindow):
         else:
             self.file_browser.hide()
 
-    def show_password_dialog(self, host, port, authenticator):
-        dialog = PasswordDialog(authenticator, host, port, parent=self)
+    def show_password_dialog(self, reply, authenticator):
+        dialog = PasswordDialog(authenticator, reply, parent=self)
+        dialog.exec_()
+
+    def show_proxy_dialog(self, proxy, authenticator):
+        dialog = ProxyDialog(authenticator, proxy, parent=self)
         dialog.exec_()
 
     def autotag(self):
@@ -694,6 +699,6 @@ class MainWindow(QtGui.QMainWindow):
             target = self.tagger.unmatched_files
         else:
             target = selected_objects[0]
-        self.fileTreeView.drop_files(self.tagger.get_files_from_objects(self._clipboard), target)
+        self.panel.views[0].drop_files(self.tagger.get_files_from_objects(self._clipboard), target)
         self._clipboard = []
         self.paste_action.setEnabled(False)

@@ -19,6 +19,7 @@
 
 import os.path
 from PyQt4 import QtCore, QtGui
+from picard.track import Track
 from picard.metadata import Metadata
 from picard.util import sanitize_date, format_time, encode_filename
 from picard.ui.util import StandardButton
@@ -67,7 +68,7 @@ class TagEditor(QtGui.QDialog):
         if total == 1:
             title += files[0].base_filename
         else:
-            title += ngettext("%d file", "%d files", total) % total
+            title += ungettext("%d file", "%d files", total) % total
         self.setWindowTitle(title)
 
         self.ui.buttonbox.addButton(StandardButton(StandardButton.OK), QtGui.QDialogButtonBox.AcceptRole)
@@ -82,6 +83,12 @@ class TagEditor(QtGui.QDialog):
 
         self.ui.tags.setSortingEnabled(True)
         self.ui.tags.sortByColumn(0, QtCore.Qt.AscendingOrder)
+
+        if self.config.setting['enable_ratings']:
+            self.ui.rating.setMaximum(self.config.setting['rating_steps'] - 1)
+        else:
+            self.ui.ratingLabel.hide()
+            self.ui.rating.hide()
 
         self.changed = set()
         self.files = files
@@ -121,10 +128,10 @@ class TagEditor(QtGui.QDialog):
             item.setFont(1, font)
             missing = total - counts[name]
             if not missing:
-                value = ngettext("(different across %d file)",
+                value = ungettext("(different across %d file)",
                                  "(different across %d files)", total) % total
             else:
-                value = ngettext("(missing from %d file)",
+                value = ungettext("(missing from %d file)",
                                  "(missing from %d files)", missing) % missing
             item.setText(1, value)
 
@@ -136,6 +143,10 @@ class TagEditor(QtGui.QDialog):
                 item.setText(1, value)
 
         if len(self.files) == 1:
+            if self.config.setting['enable_ratings']:
+                ratings = self.files[0].metadata.getall('~rating')
+                if len(ratings) > 0:
+                    self.ui.rating.setRating(int(ratings[0]))
             for mime, data in self.files[0].metadata.images:
                 item = QtGui.QListWidgetItem()
                 pixmap = QtGui.QPixmap()
@@ -152,6 +163,19 @@ class TagEditor(QtGui.QDialog):
             if name in self.changed:
                 value = unicode(item.text(1))
                 metadata.add(name, value)
+
+        # Rate the different tracks
+        if self.config.setting['enable_ratings']:
+            rating = self.ui.rating.getRating()
+            metadata['~rating'] = unicode(rating)
+            tracks = set([file.parent for file in self.files
+                          if isinstance(file.parent, Track)])
+            ratings = {}
+            for track in tracks:
+                ratings[('recording', track.id)] = rating
+                track.metadata['~rating'] = rating
+            if self.config.setting['submit_ratings']:
+                self.tagger.xmlws.submit_ratings(ratings, None)
 
         for file in self.files:
             for name in self.changed:
@@ -238,4 +262,4 @@ class TagEditor(QtGui.QDialog):
             text = '<br/>'.join(map(lambda i: '<b>%s</b><br/>%s' % i, info))
             self.ui.info.setText(text)
         else:
-            self.ui.info.setText(ngettext("%d file", "%d files", total) % total)
+            self.ui.info.setText(ungettext("%d file", "%d files", total) % total)

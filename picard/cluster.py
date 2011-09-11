@@ -25,22 +25,26 @@ from picard.metadata import Metadata
 from picard.similarity import similarity2, similarity
 from picard.ui.item import Item
 from picard.util import format_time
+from picard.mbxml import artist_credit_from_node
 
 
 class Cluster(QtCore.QObject, Item):
 
-    def __init__(self, name, artist="", special=False, related_album=None):
+    def __init__(self, name, artist="", special=False, related_album=None, hide_if_empty=False):
         QtCore.QObject.__init__(self)
         self.metadata = Metadata()
         self.metadata['album'] = name
         self.metadata['artist'] = artist
         self.metadata['totaltracks'] = 0
         self.special = special
+        self.hide_if_empty = hide_if_empty
         self.related_album = related_album
         self.files = []
 
+        self.lookup_task = None
+
         # Weights for different elements when comparing a cluster to a release
-        self.comparison_weights = { 'title' : 17, 'artist' : 6, 'totaltracks' : 5 }
+        self.comparison_weights = { 'album' : 17, 'artist' : 6, 'totaltracks' : 5, 'releasecountry': 2, 'format': 2 }
 
     def __repr__(self):
         return '<Cluster %r>' % self.metadata['album']
@@ -104,6 +108,9 @@ class Cluster(QtCore.QObject, Item):
         """Return if this object can be fingerprinted."""
         return True
 
+    def can_autotag(self):
+        return True
+
     def can_refresh(self):
         return False
 
@@ -126,34 +133,28 @@ class Cluster(QtCore.QObject, Item):
           * title                = 17
           * artist name          = 6
           * number of tracks     = 5
+          * release country      = 2
+          * format               = 2
 
-        TODO:
-          * use release events
-          * prioritize official albums over compilations (optional?)
         """
         total = 0.0
-
-        a = self.metadata['album']
-        b = release.title[0].text
-        total += similarity2(a, b) * self.comparison_weights['title']
+        parts = []
+        w = self.comparison_weights
 
         a = self.metadata['artist']
-        b = release.artist[0].name[0].text
-        total += similarity2(a, b) * self.comparison_weights['artist']
+        b = artist_credit_from_node(release.artist_credit[0], self.config)[0]
+        parts.append((similarity2(a, b), w["artist"]))
+        total += w["artist"]
 
-        a = len(self.files)
-        b = int(release.track_list[0].count)
-        if a > b:
-            score = 0.0
-        elif a < b:
-            score = 0.3
-        else:
-            score = 1.0
-        total += score * self.comparison_weights['totaltracks']
+        t, p = self.metadata.compare_to_release(release, w, self.config)
+        total += t
+        parts.extend(p)
 
-        return total / sum(self.comparison_weights.values())
+        return reduce(lambda x, y: x + y[0] * y[1] / total, parts, 0.0)
 
     def _lookup_finished(self, document, http, error):
+        self.lookup_task = None
+
         try:
             releases = document.metadata[0].release_list[0].release
         except (AttributeError, IndexError):
@@ -169,7 +170,7 @@ class Cluster(QtCore.QObject, Item):
         for release in releases:
             matches.append((self._compare_to_release(release), release))
         matches.sort(reverse=True)
-        self.log.debug("Matches: %r", matches)
+        #self.log.debug("Matches: %r", matches)
 
         if matches[0][0] < self.config.setting['cluster_lookup_threshold']:
             self.tagger.window.set_statusbar_message(N_("No matching releases for cluster %s"), self.metadata['album'], timeout=3000)
@@ -180,11 +181,16 @@ class Cluster(QtCore.QObject, Item):
     def lookup_metadata(self):
         """ Try to identify the cluster using the existing metadata. """
         self.tagger.window.set_statusbar_message(N_("Looking up the metadata for cluster %s..."), self.metadata['album'])
-        self.tagger.xmlws.find_releases(self._lookup_finished,
+        self.lookup_task = self.tagger.xmlws.find_releases(self._lookup_finished,
             artist=self.metadata.get('artist', ''),
             release=self.metadata.get('album', ''),
             tracks=str(len(self.files)),
             limit=25)
+
+    def clear_lookup_task(self):
+        if self.lookup_task:
+            self.tagger.xmlws.remove_task(self.lookup_task)
+            self.lookup_task = None
 
     @staticmethod
     def cluster(files, threshold):
@@ -193,12 +199,6 @@ class Cluster(QtCore.QObject, Item):
         tracks = []
         for file in files:
             album = file.metadata["album"]
-            try:
-                discnumber = int(file.metadata["discnumber"])
-            except (ValueError, KeyError):
-                discnumber = 0
-            if discnumber and "disc" not in album and "CD" not in album:
-                album = "%s (disc %d)" % (album, discnumber)
             # For each track, record the index of the artist and album within the clusters
             tracks.append((artistDict.add(file.metadata["artist"]),
                            albumDict.add(album)))
@@ -207,7 +207,7 @@ class Cluster(QtCore.QObject, Item):
         artist_cluster = artist_cluster_engine.cluster(threshold)
 
         album_cluster_engine = ClusterEngine(albumDict)
-        album_cluster = album_cluster_engine.cluster(threshold) 
+        album_cluster = album_cluster_engine.cluster(threshold)
 
         # Arrange tracks into albums
         albums = {}
@@ -242,7 +242,7 @@ class Cluster(QtCore.QObject, Item):
 
 
 class UnmatchedFiles(Cluster):
-    """Special cluster for 'Unmatched Files'."""
+    """Special cluster for 'Unmatched Files' which have no PUID and have not been clustered."""
 
     def __init__(self):
         super(UnmatchedFiles, self).__init__(_(u"Unmatched Files"), special=True)
@@ -260,8 +260,7 @@ class UnmatchedFiles(Cluster):
         self.tagger.window.enable_cluster(self.get_num_files() > 0)
 
     def lookup_metadata(self):
-        for file in self.files:
-            file.lookup_metadata()
+        self.tagger.autotag(self.files)
 
 
 class ClusterList(list, Item):
@@ -280,7 +279,7 @@ class ClusterList(list, Item):
 
 
 class ClusterDict(object):
-   
+
     def __init__(self):
         # word -> id index
         self.words = {}
@@ -289,12 +288,14 @@ class ClusterDict(object):
         # counter for new id generation
         self.id = 0
         self.regexp = re.compile(ur'\W', re.UNICODE)
+        self.spaces = re.compile(ur'\s', re.UNICODE)
 
     def getSize(self):
         return self.id
 
     def tokenize(self, word):
-        return self.regexp.sub(u'', word.lower())
+        token = self.regexp.sub(u'', word.lower())
+        return token if token else self.spaces.sub(u'', word.lower())
 
     def add(self, word):
         """
@@ -302,12 +303,12 @@ class ClusterDict(object):
         does exist, increment the count. Return the index of the word
         in the dictionary or -1 is the word is empty.
         """
-        
-        if word == u'': 
+
+        if word == u'':
            return -1
-       
+
         token = self.tokenize(word)
-        if token == u'': 
+        if token == u'':
            return -1
 
         try:
@@ -345,7 +346,7 @@ class ClusterDict(object):
            index, count = self.words[word]
         except KeyError:
            pass
-        return word, count 
+        return word, count
 
 
 class ClusterEngine(object):
@@ -364,7 +365,7 @@ class ClusterEngine(object):
         return self.idClusterIndex.get(id)
 
     def printCluster(self, cluster):
-        if cluster < 0: 
+        if cluster < 0:
             print "[no such cluster]"
             return
 
@@ -373,10 +374,10 @@ class ClusterEngine(object):
 
     def getClusterTitle(self, cluster):
 
-        if cluster < 0: 
+        if cluster < 0:
             return ""
 
-        max = 0 
+        max = 0
         maxWord = u''
         for id in self.clusterBins[cluster]:
             word, count = self.clusterDict.getWordAndCount(id)
@@ -388,16 +389,16 @@ class ClusterEngine(object):
 
     def cluster(self, threshold):
 
-        # keep the matches sorted in a heap
+        # Keep the matches sorted in a heap
         heap = []
 
         for y in xrange(self.clusterDict.getSize()):
             for x in xrange(y):
                 if x != y:
-                    c = similarity(self.clusterDict.getToken(x).lower(), 
+                    c = similarity(self.clusterDict.getToken(x).lower(),
                                    self.clusterDict.getToken(y).lower())
                     #print "'%s' - '%s' = %f" % (
-                    #    self.clusterDict.getToken(x).encode('utf-8', 'replace').lower(),  
+                    #    self.clusterDict.getToken(x).encode('utf-8', 'replace').lower(),
                     #    self.clusterDict.getToken(y).encode('utf-8', 'replace').lower(), c)
 
                     if c >= threshold:
@@ -417,12 +418,12 @@ class ClusterEngine(object):
             c, pair = heappop(heap)
             c = 1.0 - c
 
-            try: 
+            try:
                 match0 = self.idClusterIndex[pair[0]]
             except:
                 match0 = -1
 
-            try: 
+            try:
                 match1 = self.idClusterIndex[pair[1]]
             except:
                 match1 = -1
@@ -439,15 +440,15 @@ class ClusterEngine(object):
 
             # If cluster0 is in a bin, stick the other match into that bin
             if match0 >= 0 and match1 < 0:
-                self.clusterBins[match0].append(pair[1]) 
+                self.clusterBins[match0].append(pair[1])
                 self.idClusterIndex[pair[1]] = match0
-                #print "add '%s' to cluster " % (self.clusterDict.getWord(pair[0])), 
+                #print "add '%s' to cluster " % (self.clusterDict.getWord(pair[0])),
                 #self.printCluster(match0)
                 continue
-               
+
             # If cluster1 is in a bin, stick the other match into that bin
             if match1 >= 0 and match0 < 0:
-                self.clusterBins[match1].append(pair[0]) 
+                self.clusterBins[match1].append(pair[0])
                 self.idClusterIndex[pair[0]] = match1
                 #print "add '%s' to cluster " % (self.clusterDict.getWord(pair[1])),
                 #self.printCluster(match0)
@@ -462,7 +463,7 @@ class ClusterEngine(object):
                 #self.printCluster(match0)
                 del self.clusterBins[match1]
 
-        return self.clusterBins 
+        return self.clusterBins
 
     def can_refresh(self):
         return False

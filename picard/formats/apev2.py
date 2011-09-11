@@ -25,7 +25,7 @@ import mutagen.optimfrog
 import mutagenext.tak
 from picard.file import File
 from picard.metadata import Metadata
-from picard.util import encode_filename, sanitize_date
+from picard.util import encode_filename, sanitize_date, mimetype
 
 class APEv2File(File):
     """Generic APEv2-based file."""
@@ -41,6 +41,7 @@ class APEv2File(File):
         "CatalogNumber": "catalognumber",
         "Barcode": "barcode",
         "EncodedBy": "encodedby",
+        "Language": "language",
         "MUSICBRAINZ_ALBUMSTATUS": "releasestatus",
         "MUSICBRAINZ_ALBUMTYPE": "releasetype",
     }
@@ -52,6 +53,11 @@ class APEv2File(File):
         metadata = Metadata()
         if file.tags:
             for origname, values in file.tags.items():
+                if origname.lower().startswith("cover art") and values.kind == mutagen.apev2.BINARY:
+                    if '\0' in values.value:
+                        descr, data = values.value.split('\0', 1)
+                        mime = mimetype.get_from_data(data, descr, 'image/jpeg')
+                        metadata.add_image(mime, data)
                 # skip EXTERNAL and BINARY values
                 if values.kind != mutagen.apev2.TEXT:
                     continue
@@ -66,12 +72,19 @@ class APEv2File(File):
                         if len(track) > 1:
                             metadata["totaltracks"] = track[1]
                             value = track[0]
-                    elif name == 'Performer' and value.endswith(')'):
-                        name = name.lower()
-                        start = value.rfind(' (')
-                        if start > 0:
-                            name += ':' + value[start + 2:-1]
-                            value = value[:start]
+                    elif name == "Disc":
+                        name = "discnumber"
+                        disc = value.split("/")
+                        if len(disc) > 1:
+                            metadata["totaldiscs"] = disc[1]
+                            value = disc[0]
+                    elif name == 'Performer' or name == 'Comment':
+                        name = name.lower() + ':'
+                        if value.endswith(')'):
+                            start = value.rfind(' (')
+                            if start > 0:
+                                name += value[start + 2:-1]
+                                value = value[:start]
                     elif name in self.__translate:
                         name = self.__translate[name]
                     else:
@@ -89,6 +102,10 @@ class APEv2File(File):
             tags = mutagen.apev2.APEv2()
         if settings["clear_existing_tags"]:
             tags.clear()
+        elif settings['save_images_to_tags'] and metadata.images:
+            for name, value in tags.items():
+                if name.lower().startswith('cover art') and value.kind == mutagen.apev2.BINARY:
+                    del tags[name]
         temp = {}
         for name, value in metadata.items():
             if name.startswith("~"):
@@ -122,6 +139,13 @@ class APEv2File(File):
             temp.setdefault(name, []).append(value)
         for name, values in temp.items():
             tags[str(name)] = values
+        if settings['save_images_to_tags']:
+            for mime, data in metadata.images:
+                cover_filename = 'Cover Art (Front)'
+                cover_filename += mimetype.get_extension(mime, '.jpg')
+                tags['Cover Art (Front)'] = cover_filename + '\0' + data
+                break # can't save more than one item with the same name
+                      # (mp3tags does this, but it's against the specs)
         tags.save(encode_filename(filename))
 
 class MusepackFile(APEv2File):
@@ -149,7 +173,7 @@ class OptimFROGFile(APEv2File):
     _File = mutagen.optimfrog.OptimFROG
     def _info(self, metadata, file):
         super(OptimFROGFile, self)._info(metadata, file)
-        if filename.lower().endswith(".ofs"):
+        if file.filename.lower().endswith(".ofs"):
             metadata['~format'] = "OptimFROG DualStream Audio"
         else:
             metadata['~format'] = "OptimFROG Lossless Audio"

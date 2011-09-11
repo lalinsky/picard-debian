@@ -25,6 +25,7 @@ import sys
 import re
 import traceback
 from PyQt4 import QtCore
+from picard.mbxml import artist_credit_from_node
 from picard.metadata import Metadata
 from picard.ui.item import Item
 from picard.script import ScriptParser
@@ -42,6 +43,7 @@ from picard.util import (
     format_time,
     LockableObject,
     pathcmp,
+    mimetype
     )
 
 
@@ -53,6 +55,7 @@ class File(LockableObject, Item):
         File.__id_counter += 1
         return File.__id_counter
 
+    UNDEFINED = -1
     PENDING = 0
     NORMAL = 1
     CHANGED = 2
@@ -64,6 +67,7 @@ class File(LockableObject, Item):
         self.id = self.new_id()
         self.filename = filename
         self.base_filename = os.path.basename(filename)
+        self._state = File.UNDEFINED
         self.state = File.PENDING
         self.error = None
 
@@ -81,10 +85,16 @@ class File(LockableObject, Item):
         self.similarity = 1.0
         self.parent = None
 
+        self.lookup_task = None
+
+        self.comparison_weights = {"title": 13, "artist": 4, "album": 5,
+            "length": 10, "totaltracks": 4, "releasetype": 20,
+            "releasecountry": 2, "format": 2}
+
     def __repr__(self):
         return '<File #%d %r>' % (self.id, self.base_filename)
 
-    def load(self, next, thread_pool):
+    def load(self, next):
         self.tagger.load_queue.put((
             partial(self._load, self.filename),
             partial(self._loading_finished, next),
@@ -128,11 +138,11 @@ class File(LockableObject, Item):
         """Load metadata from the file."""
         raise NotImplementedError
 
-    def save(self, next, thread_pool, settings):
+    def save(self, next, settings):
+        self.set_pending()
         metadata = Metadata()
         metadata.copy(self.metadata)
-        metadata.strip_whitespace()
-        self.tagger.load_queue.put((
+        self.tagger.save_queue.put((
             partial(self._save_and_rename, self.filename, metadata, settings),
             partial(self._saving_finished, next),
             QtCore.Qt.LowEventPriority + 2))
@@ -165,16 +175,21 @@ class File(LockableObject, Item):
         old_filename = new_filename = self.filename
         if error is not None:
             self.error = str(error)
-            self.state = File.ERROR
+            self.set_state(File.ERROR, update=True)
         else:
-            self.error = None
-            self.state = File.NORMAL
             self.filename = new_filename = result
             length = self.orig_metadata.length
+            temp_info = {}
+            for info in ('~#bitrate', '~#sample_rate', '~#channels',
+                         '~#bits_per_sample', '~format', '~extension'):
+                temp_info[info] = self.orig_metadata[info]
             self.orig_metadata.copy(self.metadata)
             self.orig_metadata.length = length
+            for k, v in temp_info.items():
+                self.orig_metadata[k] = v
             self.metadata.changed = False
-        self.update()
+            self.error = None
+            self.clear_pending()
         return self, old_filename, new_filename
 
     def _save(self, filename, metadata, settings):
@@ -188,7 +203,8 @@ class File(LockableObject, Item):
         for name in metadata.keys():
             if isinstance(metadata[name], basestring):
                 metadata[name] = sanitize_filename(metadata[name])
-        filename = ScriptParser().eval(format, metadata)
+        format = format.replace("\t", "").replace("\n", "")
+        filename = ScriptParser().eval(format, metadata, self)
         # replace incompatible characters
         if settings["windows_compatible_filenames"] or sys.platform == "win32":
             filename = replace_win32_incompat(filename)
@@ -211,10 +227,9 @@ class File(LockableObject, Item):
 
         if settings["rename_files"]:
             # expand the naming format
-            if metadata['compilation'] == '1':
+            format = settings['file_naming_format']
+            if settings['use_va_format'] and metadata['compilation'] == '1':
                 format = settings['va_file_naming_format']
-            else:
-                format = settings['file_naming_format']
             if len(format) > 0:
                 new_filename = self._script_to_filename(format, metadata, settings)
                 if not settings['move_files']:
@@ -227,8 +242,7 @@ class File(LockableObject, Item):
                 new_filename = new_filename.replace('/.', '/_').replace('\\.', '\\_')
                 if new_filename[0] == '.':
                     new_filename = '_' + new_filename[1:]
-
-        return os.path.join(new_dirname, new_filename + ext.lower())
+        return os.path.realpath(os.path.join(new_dirname, new_filename + ext.lower()))
 
     def _rename(self, old_filename, metadata, settings):
         new_filename, ext = os.path.splitext(
@@ -269,7 +283,7 @@ class File(LockableObject, Item):
         i = 0
         for mime, data in metadata.images:
             image_filename = filename
-            ext = ".jpg" # FIXME
+            ext = mimetype.get_extension(mime, ".jpg")
             if i > 0:
                 image_filename = "%s (%d)" % (filename, i)
             i += 1
@@ -308,12 +322,14 @@ class File(LockableObject, Item):
         if from_parent and self.parent:
             self.log.debug("Removing %r from %r", self, self.parent)
             self.parent.remove_file(self)
-        self.tagger.puidmanager.update(self.metadata['musicip_puid'], self.metadata['musicbrainz_trackid'])
+        self.tagger.puidmanager.remove(self.metadata['musicip_puid'])
         self.state = File.REMOVED
 
     def move(self, parent):
         if parent != self.parent:
             self.log.debug("Moving %r from %r to %r", self, self.parent, parent)
+            self.clear_lookup_task()
+            self.tagger._ofa.stop_analyze(self)
             if self.parent:
                 self.clear_pending()
                 self.parent.remove_file(self)
@@ -369,6 +385,9 @@ class File(LockableObject, Item):
         """Return if this object can be fingerprinted."""
         return True
 
+    def can_autotag(self):
+        return True
+
     def can_refresh(self):
         return False
 
@@ -388,11 +407,21 @@ class File(LockableObject, Item):
     def get_state(self):
         return self._state
 
+
+    # in order to significantly speed up performance, the number of pending
+    #  files is cached
+    num_pending_files = 0
+
     def set_state(self, state, update=False):
+        if state != self._state:
+            if state == File.PENDING:
+                File.num_pending_files += 1
+            elif self._state == File.PENDING:
+                File.num_pending_files -= 1
         self._state = state
         if update:
             self.update()
-        self.tagger.emit(QtCore.SIGNAL("file_state_changed"))
+        self.tagger.emit(QtCore.SIGNAL("file_state_changed"), File.num_pending_files)
 
     state = property(get_state, set_state)
 
@@ -412,61 +441,68 @@ class File(LockableObject, Item):
 
         Weigths:
           * title                = 13
-          * artist name          = 3
+          * artist name          = 4
           * release name         = 5
           * length               = 10
-          * number of tracks     = 3
+          * number of tracks     = 4
+          * album type           = 20
+          * release country      = 2
+          * format               = 2
 
         """
         total = 0.0
         parts = []
+        w = self.comparison_weights
 
         if 'title' in self.metadata:
             a = self.metadata['title']
             b = track.title[0].text
-            parts.append((similarity2(a, b), 13))
-            total += 13
+            parts.append((similarity2(a, b), w["title"]))
+            total += w["title"]
 
         if 'artist' in self.metadata:
             a = self.metadata['artist']
-            b = track.artist[0].name[0].text
-            parts.append((similarity2(a, b), 4))
-            total += 4
-
-        if 'album' in self.metadata:
-            a = self.metadata['album']
-            b = track.release_list[0].release[0].title[0].text
-            parts.append((similarity2(a, b), 5))
-            total += 5
+            b = artist_credit_from_node(track.artist_credit[0], self.config)[0]
+            parts.append((similarity2(a, b), w["artist"]))
+            total += w["artist"]
 
         a = self.metadata.length
-        if a > 0 and 'duration' in track.children:
-            b = int(track.duration[0].text)
+        if a > 0 and 'length' in track.children:
+            b = int(track.length[0].text)
             score = 1.0 - min(abs(a - b), 30000) / 30000.0
-            parts.append((score, 10))
-            total += 10
+            parts.append((score, w["length"]))
+            total += w["length"]
 
-        track_list = track.release_list[0].release[0].track_list[0]
-        if 'totaltracks' in self.metadata and 'count' in track_list.attribs:
-            try:
-                a = int(self.metadata['totaltracks'])
-                b = int(track_list.count)
-                if a > b:
-                    score = 0.0
-                elif a < b:
-                    score = 0.3
-                else:
-                    score = 1.0
-                parts.append((score, 4))
-                total += 4
-            except ValueError:
-                pass
+        releases = []
+        if "release_list" in track.children and "release" in track.release_list[0].children:
+            releases = track.release_list[0].release
 
-        return reduce(lambda x, y: x + y[0] * y[1] / total, parts, 0.0)
+        if not releases:
+            return (total, None)
+
+        scores = []
+        for release in releases:
+            t, p = self.metadata.compare_to_release(release, w, self.config)
+            total_ = total + t
+            parts_ = list(parts) + p
+            scores.append((reduce(lambda x, y: x + y[0] * y[1] / total_, parts_, 0.0), release.id))
+
+        return max(scores, key=lambda x: x[0])
 
     def _lookup_finished(self, lookuptype, document, http, error):
+        self.lookup_task = None
+
+        if self.state == File.REMOVED:
+            return
+
         try:
-            tracks = document.metadata[0].track_list[0].track
+            m = document.metadata[0]
+            if lookuptype == "metadata":
+                tracks = m.recording_list[0].recording
+            elif lookuptype == "puid":
+                tracks = m.puid[0].recording_list[0].recording
+            elif lookuptype == "trackid":
+                tracks = m.recording
         except (AttributeError, IndexError):
             tracks = None
 
@@ -479,37 +515,40 @@ class File(LockableObject, Item):
         # multiple matches -- calculate similarities to each of them
         matches = []
         for track in tracks:
-            matches.append((self._compare_to_track(track), track))
+            score, release = self._compare_to_track(track)
+            matches.append((score, track, release))
         matches.sort(reverse=True)
-        self.log.debug("Track matches: %r", matches)
+        #self.log.debug("Track matches: %r", matches)
 
-        if lookuptype == 'puid':
-            threshold = self.config.setting['puid_lookup_threshold']
-        else:
+        if lookuptype != 'puid':
             threshold = self.config.setting['file_lookup_threshold']
-
-        if matches[0][0] < threshold:
-            self.tagger.window.set_statusbar_message(N_("No matching tracks above the threshold for file %s"), self.filename, timeout=3000)
-            self.clear_pending()
-            return
+            if matches[0][0] < threshold:
+                self.tagger.window.set_statusbar_message(N_("No matching tracks above the threshold for file %s"), self.filename, timeout=3000)
+                self.clear_pending()
+                return
         self.tagger.window.set_statusbar_message(N_("File %s identified!"), self.filename, timeout=3000)
         self.clear_pending()
 
-        albumid = matches[0][1].release_list[0].release[0].id
-        trackid = matches[0][1].id
+        albumid = matches[0][2]
+        track = matches[0][1]
         if lookuptype == 'puid':
-            self.tagger.puidmanager.add(self.metadata['musicip_puid'], trackid)
-        self.tagger.move_file_to_track(self, albumid, trackid)
+            self.tagger.puidmanager.add(self.metadata['musicip_puid'], track.id)
+        if albumid:
+            self.tagger.move_file_to_track(self, albumid, track.id)
+        else:
+            self.tagger.move_file_to_nat(self, track.id, node=track)
 
     def lookup_puid(self, puid):
         """ Try to identify the file using the PUID. """
         self.tagger.window.set_statusbar_message(N_("Looking up the PUID for file %s..."), self.filename)
-        self.tagger.xmlws.find_tracks(partial(self._lookup_finished, 'puid'), puid=puid)
+        self.clear_lookup_task()
+        self.lookup_task = self.tagger.xmlws.lookup_puid(puid, partial(self._lookup_finished, 'puid'))
 
     def lookup_metadata(self):
         """ Try to identify the file using the existing metadata. """
         self.tagger.window.set_statusbar_message(N_("Looking up the metadata for file %s..."), self.filename)
-        self.tagger.xmlws.find_tracks(partial(self._lookup_finished, 'metadata'),
+        self.clear_lookup_task()
+        self.lookup_task = self.tagger.xmlws.find_tracks(partial(self._lookup_finished, 'metadata'),
             track=self.metadata.get('title', ''),
             artist=self.metadata.get('artist', ''),
             release=self.metadata.get('album', ''),
@@ -517,6 +556,11 @@ class File(LockableObject, Item):
             tracks=self.metadata.get('totaltracks', ''),
             qdur=str(self.metadata.length / 2000),
             limit=25)
+
+    def clear_lookup_task(self):
+        if self.lookup_task:
+            self.tagger.xmlws.remove_task(self.lookup_task)
+            self.lookup_task = None
 
     def set_pending(self):
         if self.state == File.REMOVED:

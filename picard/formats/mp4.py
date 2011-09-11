@@ -36,6 +36,7 @@ class MP4File(File):
         "\xa9day": "date",
         "\xa9gen": "genre",
         "\xa9lyr": "lyrics",
+        "\xa9cmt": "comment:",
         "\xa9too": "encodedby",
         "cprt": "copyright",
         "soal": "albumsort",
@@ -56,6 +57,11 @@ class MP4File(File):
     }
     __r_bool_tags = dict([(v, k) for k, v in __bool_tags.iteritems()])
 
+    __int_tags = {
+        "tmpo": "bpm",
+    }
+    __r_int_tags = dict([(v, k) for k, v in __int_tags.iteritems()])
+
     __freeform_tags = {
         "----:com.apple.iTunes:MusicBrainz Track Id": "musicbrainz_trackid",
         "----:com.apple.iTunes:MusicBrainz Artist Id": "musicbrainz_artistid",
@@ -67,6 +73,8 @@ class MP4File(File):
         "----:com.apple.iTunes:MusicBrainz Album Type": "releasetype",
         "----:com.apple.iTunes:MusicBrainz Disc Id": "musicbrainz_discid",
         "----:com.apple.iTunes:MusicBrainz TRM Id": "musicbrainz_trmid",
+        "----:com.apple.iTunes:MusicBrainz Work Id": "musicbrainz_workid",
+        "----:com.apple.iTunes:MusicBrainz Release Group Id": "musicbrainz_releasegroupid",
         "----:com.apple.iTunes:ASIN": "asin",
         "----:com.apple.iTunes:BARCODE": "barcode",
         "----:com.apple.iTunes:PRODUCER": "producer",
@@ -83,6 +91,8 @@ class MP4File(File):
         "----:com.apple.iTunes:SUBTITLE": "subtitle",
         "----:com.apple.iTunes:DISCSUBTITLE": "discsubtitle",
         "----:com.apple.iTunes:MOOD": "mood",
+        "----:com.apple.iTunes:SCRIPT": "script",
+        "----:com.apple.iTunes:LANGUAGE": "language",
     }
     __r_freeform_tags = dict([(v, k) for k, v in __freeform_tags.iteritems()])
 
@@ -99,6 +109,9 @@ class MP4File(File):
                     metadata.add(self.__text_tags[name], value)
             elif name in self.__bool_tags:
                 metadata.add(self.__bool_tags[name], values and '1' or '0')
+            elif name in self.__int_tags:
+                for value in values:
+                    metadata.add(self.__int_tags[name], unicode(value))
             elif name in self.__freeform_tags:
                 for value in values:
                     value = value.strip("\x00").decode("utf-8", "replace")
@@ -118,7 +131,7 @@ class MP4File(File):
                 for value in values:
                     if value.format == value.FORMAT_JPEG:
                         metadata.add_image("image/jpeg", value)
-                    else:
+                    elif value.format == value.FORMAT_PNG:
                         metadata.add_image("image/png", value)
 
         self._info(metadata, file)
@@ -140,6 +153,11 @@ class MP4File(File):
                 file.tags[self.__r_text_tags[name]] = values
             elif name in self.__r_bool_tags:
                 file.tags[self.__r_bool_tags[name]] = (values[0] == '1')
+            elif name in self.__r_int_tags:
+                try:
+                    file.tags[self.__r_int_tags[name]] = [int(value) for value in values]
+                except ValueError:
+                    pass
             elif name in self.__r_freeform_tags:
                 values = [v.encode("utf-8") for v in values]
                 file.tags[self.__r_freeform_tags[name]] = values
@@ -160,14 +178,15 @@ class MP4File(File):
             else:
                 file.tags["disk"] = [(int(metadata["discnumber"]), 0)]
 
-        covr = []
-        for mime, data in metadata.images:
-            if mime == "image/jpeg":
-                covr.append(MP4Cover(data, format=MP4Cover.FORMAT_JPEG))
-            else:
-                covr.append(MP4Cover(data, format=MP4Cover.FORMAT_PNG))
-        if covr:
-            file.tags["covr"] = covr
+        if settings['save_images_to_tags']:
+            covr = []
+            for mime, data in metadata.images:
+                if mime == "image/jpeg":
+                    covr.append(MP4Cover(data, MP4Cover.FORMAT_JPEG))
+                elif mime == "image/png":
+                    covr.append(MP4Cover(data, MP4Cover.FORMAT_PNG))
+            if covr:
+                file.tags["covr"] = covr
 
         file.save()
 

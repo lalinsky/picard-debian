@@ -21,6 +21,7 @@
 import ctypes
 import sys
 import os
+import traceback
 from PyQt4 import QtCore
 from picard.ui.cdlookup import CDLookupDialog
 
@@ -45,7 +46,7 @@ class Disc(QtCore.QObject):
             _libdiscid = _openLibrary()
         handle = _libdiscid.discid_new()
         assert handle != 0, "libdiscid: discid_new() returned NULL"
-        res = _libdiscid.discid_read(handle, device)
+        res = _libdiscid.discid_read(handle, device or None)
         if res == 0:
             raise DiscError(_libdiscid.discid_get_error_msg(handle))
         self.id = _libdiscid.discid_get_id(handle)
@@ -53,19 +54,20 @@ class Disc(QtCore.QObject):
         _libdiscid.discid_free(handle)
 
     def lookup(self):
-        self.tagger.xmlws.find_releases(self._lookup_finished, discid=self.id)
+        self.tagger.xmlws.lookup_discid(self.id, self._lookup_finished)
 
     def _lookup_finished(self, document, http, error):
         self.tagger.restore_cursor()
+        releases = []
         if error:
             self.log.error("%r", unicode(http.errorString()))
-            return
-        try:
-            releases = document.metadata[0].release_list[0].release
-        except (AttributeError, IndexError):
-            releases = []
+        else:
+            try:
+                releases = document.metadata[0].disc[0].release_list[0].release
+            except (AttributeError, IndexError):
+                self.log.error(traceback.format_exc())
 
-        dialog = CDLookupDialog(releases, self)
+        dialog = CDLookupDialog(releases, self, parent=self.tagger.window)
         dialog.exec_()
 
 
@@ -80,7 +82,7 @@ def _openLibrary():
     # Check to see if we're running in a Mac OS X bundle.
     if sys.platform == 'darwin':
         try:
-            libDiscId = ctypes.cdll.LoadLibrary('../Frameworks/libdiscid.1.dylib')
+            libDiscId = ctypes.cdll.LoadLibrary('../Frameworks/libdiscid.0.dylib')
             _setPrototypes(libDiscId)
             return libDiscId
         except OSError, e:
@@ -103,7 +105,7 @@ def _openLibrary():
     if sys.platform == 'linux2':
         libName = 'libdiscid.so.0'
     elif sys.platform == 'darwin':
-        libName = 'libdiscid.1.dylib'
+        libName = 'libdiscid.0.dylib'
     elif sys.platform == 'win32':
         libName = 'discid.dll'
     else:
