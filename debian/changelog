@@ -1,3 +1,11 @@
+picard (0.15.1-1) unstable; urgency=low
+
+  * New maintainer (Closes: #XXX)
+  * New upstream release
+  * Update standards version to 3.9.1
+
+ -- Lukáš Lalinský <lalinsky@gmail.com>  Sun, 11 Sep 2011 18:46:54 +0200
+
 picard (0.11-2.1) unstable; urgency=low
 
   * Non-maintainer upload, to drop Python 2.4; thanks to Luca Falavigna for the
