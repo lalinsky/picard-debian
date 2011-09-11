@@ -34,8 +34,8 @@ class TagsOptionsPage(OptionsPage):
     options = [
         BoolOption("setting", "clear_existing_tags", False),
         BoolOption("setting", "write_id3v1", True),
-        BoolOption("setting", "write_id3v23", False),
-        TextOption("setting", "id3v2_encoding", "utf-8"),
+        BoolOption("setting", "write_id3v23", True),
+        TextOption("setting", "id3v2_encoding", "utf-16"),
         BoolOption("setting", "remove_id3_from_flac", False),
         BoolOption("setting", "remove_ape_from_mp3", False),
         BoolOption("setting", "tpe2_albumartist", False),
@@ -47,9 +47,10 @@ class TagsOptionsPage(OptionsPage):
         self.ui = Ui_TagsOptionsPage()
         self.ui.setupUi(self)
         self.connect(self.ui.write_id3v23, QtCore.SIGNAL("clicked()"), self.update_encodings)
+        self.connect(self.ui.write_id3v24, QtCore.SIGNAL("clicked()"), self.update_encodings)
 
     def load(self):
-        self.ui.dont_write_tags.setChecked(self.config.setting["dont_write_tags"])
+        self.ui.write_tags.setChecked(not self.config.setting["dont_write_tags"])
         self.ui.clear_existing_tags.setChecked(self.config.setting["clear_existing_tags"])
         self.ui.write_id3v1.setChecked(self.config.setting["write_id3v1"])
         self.ui.write_id3v23.setChecked(self.config.setting["write_id3v23"])
@@ -64,7 +65,7 @@ class TagsOptionsPage(OptionsPage):
         self.update_encodings()
 
     def save(self):
-        self.config.setting["dont_write_tags"] = self.ui.dont_write_tags.isChecked()
+        self.config.setting["dont_write_tags"] = not self.ui.write_tags.isChecked()
         self.config.setting["clear_existing_tags"] = self.ui.clear_existing_tags.isChecked()
         self.config.setting["write_id3v1"] = self.ui.write_id3v1.isChecked()
         self.config.setting["write_id3v23"] = self.ui.write_id3v23.isChecked()
@@ -76,6 +77,7 @@ class TagsOptionsPage(OptionsPage):
             self.config.setting["id3v2_encoding"] = "utf-8"
         self.config.setting["remove_ape_from_mp3"] = self.ui.remove_ape_from_mp3.isChecked()
         self.config.setting["remove_id3_from_flac"] = self.ui.remove_id3_from_flac.isChecked()
+        self.tagger.window.enable_tag_saving_action.setChecked(not self.config.setting["dont_write_tags"])
 
     def update_encodings(self):
         if self.ui.write_id3v23.isChecked():

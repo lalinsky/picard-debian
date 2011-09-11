@@ -2,6 +2,9 @@
 #
 # Picard, the next-generation MusicBrainz tagger
 # Copyright (C) 2006-2007 Lukáš Lalinský
+# Copyright (C) 2007 Javier Kohen
+# Copyright (C) 2008 Philipp Wolfer
+#
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -18,6 +21,7 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
 import re
+import unicodedata
 from picard.plugin import ExtensionPoint
 
 class ScriptError(Exception): pass
@@ -158,7 +162,7 @@ Grammar:
                 return ScriptVariable(self._text[begin:self._pos-1])
             elif ch is None:
                 self.__raise_eof()
-            elif not isidentif(ch):
+            elif not isidentif(ch) and ch != ':':
                 self.__raise_char(ch)
 
     def parse_text(self, top):
@@ -167,7 +171,11 @@ Grammar:
             ch = self.read()
             if ch == "\\":
                 ch = self.read()
-                if ch not in "$%(),\\":
+                if ch == 'n':
+                    text.append('\n')
+                elif ch == 't':
+                    text.append('\t')
+                elif ch not in "$%(),\\":
                     self.__raise_char(ch)
                 else:
                     text.append(ch)
@@ -218,9 +226,10 @@ Grammar:
             self.load_functions()
         return self.parse_expression(True)[0]
 
-    def eval(self, script, context={}):
+    def eval(self, script, context={}, file=None):
         """Parse and evaluate the script."""
         self.context = context
+        self.file = file
         self.load_functions()
         key = hash(script)
         if key not in ScriptParser._cache:
@@ -317,9 +326,12 @@ def func_unset(parser, name):
 
 def func_set(parser, name, value):
     """Sets the variable ``name`` to ``value``."""
-    if name.startswith("_"):
-        name = "~" + name[1:]
-    parser.context[name] = value
+    if value:
+        if name.startswith("_"):
+            name = "~" + name[1:]
+        parser.context[name] = value
+    else:
+        func_unset(parser, name)
     return ""
 
 def func_get(parser, name):
@@ -334,7 +346,7 @@ def func_copy(parser, new, old):
         new = "~" + new[1:]
     if old.startswith("_"):
         old = "~" + old[1:]
-    parser.context[new] = parser.context.getall(old)[:]
+    parser.context[new] = parser.context.get(old, [])[:]
     return ""
 
 def func_trim(parser, text, char=None):
@@ -347,23 +359,38 @@ def func_trim(parser, text, char=None):
 
 def func_add(parser, x, y):
     """Add ``y`` to ``x``."""
-    return str(int(x) + int(y))
+    try:
+        return str(int(x) + int(y))
+    except ValueError:
+        return ""
 
 def func_sub(parser, x, y):
     """Substracts ``y`` from ``x``."""
-    return str(int(x) - int(y))
+    try:
+        return str(int(x) - int(y))
+    except ValueError:
+        return ""
 
 def func_div(parser, x, y):
     """Divides ``x`` by ``y``."""
-    return str(int(x) / int(y))
+    try:
+        return str(int(x) / int(y))
+    except ValueError:
+        return ""
 
 def func_mod(parser, x, y):
     """Returns the remainder of ``x`` divided by ``y``."""
-    return str(int(x) % int(y))
+    try:
+        return str(int(x) % int(y))
+    except ValueError:
+        return ""
 
 def func_mul(parser, x, y):
     """Multiplies ``x`` by ``y``."""
-    return str(int(x) * int(y))
+    try:
+        return str(int(x) * int(y))
+    except ValueError:
+        return ""
 
 def func_or(parser, x, y):
     """Returns true, if either ``x`` or ``y`` not empty."""
@@ -446,6 +473,43 @@ def func_performer(parser, pattern="", join=", "):
             values.append(value)
     return join.join(values)
 
+def func_matchedtracks(parser, arg):
+    if parser.file:
+        if parser.file.parent:
+            return str(parser.file.parent.album.get_num_matched_tracks())
+    return "0"
+
+def func_firstalphachar(parser, text, nonalpha="#"):
+    if len(text) == 0:
+        return nonalpha
+    firstchar = text[0]
+    if firstchar.isalpha():
+        return firstchar.upper()
+    else:
+        return nonalpha
+
+def func_initials(parser, text):
+    return "".join(a[:1] for a in text.split(" ") if a[:1].isalpha())
+
+def func_firstwords(parser, text, length):
+    try:
+        length = int(length)
+    except ValueError, e:
+        length = 0
+    if len(text) <= length:
+        return text
+    else:
+        if text[length] == ' ':
+            return text[:length]
+        return text[:length].rsplit(' ', 1)[0]
+
+def func_truncate(parser, text, length):
+    try:
+        length = int(length)
+    except ValueError, e:
+        length = None
+    return text[:length].rstrip()
+
 register_script_function(func_if, "if", eval_args=False)
 register_script_function(func_if2, "if2", eval_args=False)
 register_script_function(func_noop, "noop", eval_args=False)
@@ -481,3 +545,8 @@ register_script_function(func_in, "in")
 register_script_function(func_copy, "copy")
 register_script_function(func_len, "len")
 register_script_function(func_performer, "performer")
+register_script_function(func_matchedtracks, "matchedtracks")
+register_script_function(func_firstalphachar, "firstalphachar")
+register_script_function(func_initials, "initials")
+register_script_function(func_firstwords, "firstwords")
+register_script_function(func_truncate, "truncate")

@@ -35,6 +35,7 @@ class OFA(QtCore.QObject):
             self.log.warning(
                 "Libofa not found! Fingerprinting will be disabled.")
         self._decoders = []
+        self._analyze_tasks = {}
         plugins = ["avcodec", "directshow", "quicktime", "gstreamer"]
         for name in plugins:
             try:
@@ -54,7 +55,7 @@ class OFA(QtCore.QObject):
         for decoder in self._decoders:
             decoder.done()
 
-    def create_fingerprint(self, filename):
+    def calculate_fingerprint(self, filename):
         """Decode the specified file and calculate a fingerprint."""
         if ofa is None:
             return None, 0
@@ -86,11 +87,12 @@ class OFA(QtCore.QObject):
     def _lookup_fingerprint(self, next, filename, result=None, error=None):
         try:
             file = self.tagger.files[filename]
-        except (KeyError):
+            del self._analyze_tasks[file]
+        except KeyError:
             # The file has been removed. do nothing
             return
-        
-        if result is None or error is not None:
+
+        if result is None or result[0] is None or error is not None:
             next(file, result=None)
             return
         fingerprint, length = result
@@ -113,25 +115,7 @@ class OFA(QtCore.QObject):
             gnr=file.metadata["genre"],
             yrr=file.metadata["date"][:4])
 
-    def _calculate_fingerprint(self, filename):
-        self.tagger.window.set_statusbar_message(N_("Creating fingerprint for file %s..."), filename)
-        filename = encode_filename(filename)
-        for decoder in self._decoders:
-            self.log.debug("Decoding using %r...", decoder.__name__)
-            try:
-                result = decoder.decode(filename)
-            except Exception:
-                continue
-            if result:
-                self.log.debug("Fingerprinting...")
-                data, samples, sample_rate, stereo, duration = result
-                fingerprint = ofa.create_print(data, samples, sample_rate, stereo)
-                if fingerprint:
-                    return fingerprint, duration
-                else:
-                    break
-
-    def analyze(self, file, next, thread_pool):
+    def analyze(self, file, next):
         # return cached PUID
         puids = file.metadata.getall('musicip_puid')
         if puids:
@@ -145,9 +129,20 @@ class OFA(QtCore.QObject):
             return
         # calculate fingerprint
         if ofa is not None:
-            self.tagger.analyze_queue.put(file.filename)
+            if file not in self._analyze_tasks:
+                task = (partial(self.calculate_fingerprint, file.filename),
+                        partial(self._lookup_fingerprint, self.tagger._lookup_puid, file.filename),
+                        QtCore.Qt.LowEventPriority + 1)
+                self._analyze_tasks[file] = task
+                self.tagger.analyze_queue.put(task)
             return
         # no PUID
         next(result=None)
 
-
+    def stop_analyze(self, file):
+        try:
+            task = self._analyze_tasks[file]
+            self.tagger.analyze_queue.remove(task)
+            del self._analyze_tasks[file]
+        except:
+            pass

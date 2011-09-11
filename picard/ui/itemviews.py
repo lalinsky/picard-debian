@@ -20,14 +20,14 @@
 import os
 import re
 from PyQt4 import QtCore, QtGui
-from picard.album import Album
+from picard.album import Album, NatAlbum
 from picard.cluster import Cluster, ClusterList, UnmatchedFiles
 from picard.file import File
-from picard.track import Track
-from picard.util import encode_filename, icontheme, partial
+from picard.track import Track, NonAlbumTrack
+from picard.util import encode_filename, icontheme, partial, webbrowser2
 from picard.config import Option, TextOption
 from picard.plugin import ExtensionPoint
-from picard.const import RELEASE_FORMATS
+from picard.const import RELEASE_COUNTRIES
 
 
 class BaseAction(QtGui.QAction):
@@ -63,8 +63,8 @@ def register_file_action(action):
     _file_actions.register(action.__module__, action)
 
 
-def get_match_color(similarity):
-    c1 = (255, 255, 255)
+def get_match_color(similarity, basecolor):
+    c1 = (basecolor.red(), basecolor.green(), basecolor.blue())
     c2 = (223, 125, 125)
     return QtGui.QColor(
         c2[0] + (c1[0] - c2[0]) * similarity,
@@ -121,7 +121,9 @@ class MainPanel(QtGui.QSplitter):
         else:
             self.icon_dir = icontheme.lookup('folder', icontheme.ICON_SIZE_MENU)
         self.icon_file = QtGui.QIcon(":/images/file.png")
+        self.icon_file_pending = QtGui.QIcon(":/images/file-pending.png")
         self.icon_cd = icontheme.lookup('media-optical', icontheme.ICON_SIZE_MENU)
+        self.icon_cd_saved = icontheme.lookup('media-optical-saved', icontheme.ICON_SIZE_MENU)
         self.icon_note = QtGui.QIcon(":/images/note.png")
         self.icon_error = icontheme.lookup('dialog-error', icontheme.ICON_SIZE_MENU)
         self.icon_saved = QtGui.QIcon(":/images/track-saved.png")
@@ -133,6 +135,14 @@ class MainPanel(QtGui.QSplitter):
             QtGui.QIcon(":/images/match-80.png"),
             QtGui.QIcon(":/images/match-90.png"),
             QtGui.QIcon(":/images/match-100.png"),
+        ]
+        self.match_pending_icons = [
+            QtGui.QIcon(":/images/match-pending-50.png"),
+            QtGui.QIcon(":/images/match-pending-60.png"),
+            QtGui.QIcon(":/images/match-pending-70.png"),
+            QtGui.QIcon(":/images/match-pending-80.png"),
+            QtGui.QIcon(":/images/match-pending-90.png"),
+            QtGui.QIcon(":/images/match-pending-100.png"),
         ]
 
     def selected_objects(self):
@@ -165,7 +175,8 @@ class MainPanel(QtGui.QSplitter):
         if oldobj != obj:
             self._object_to_item[obj] = item
             self._item_to_object[item] = obj
-            del self._object_to_item[oldobj]
+            if oldobj in self._object_to_item:
+                del self._object_to_item[oldobj]
 
     def unregister_object(self, obj=None, item=None):
         if obj is None and item is not None:
@@ -194,16 +205,21 @@ class MainPanel(QtGui.QSplitter):
             text, similarity = file.column(column[1])
             item.setText(i, text)
             item.setTextColor(i, color)
-            item.setBackgroundColor(i, get_match_color(similarity))
-    
+            item.setBackgroundColor(i, get_match_color(similarity, self.palette().base().color()))
+        item.setData(1, QtCore.Qt.UserRole, QtCore.QVariant(file.metadata.length or 0))
+
     def decide_file_icon(self, file):
         if file.state == File.ERROR:
             return self.icon_error
         elif isinstance(file.parent, Track):
             if file.state == File.NORMAL:
                 return self.icon_saved
+            elif file.state == File.PENDING:
+                return self.match_pending_icons[int(file.similarity * 5 + 0.5)]
             else:
                 return self.match_icons[int(file.similarity * 5 + 0.5)]
+        elif file.state == File.PENDING:
+            return self.icon_file_pending
         else:
             return self.icon_file
 
@@ -216,8 +232,9 @@ class MainPanel(QtGui.QSplitter):
                 return
         for i, column in enumerate(self.columns):
             item.setText(i, cluster.column(column[1]))
+        item.setData(1, QtCore.Qt.UserRole, QtCore.QVariant(cluster.metadata.length or 0))
         album = cluster.related_album
-        if cluster.special == 2 and album and album.loaded:
+        if cluster.special and album and album.loaded:
             self.views[1].update_album(album, update_tracks=False)
 
     def add_file_to_cluster(self, cluster, file):
@@ -226,21 +243,21 @@ class MainPanel(QtGui.QSplitter):
         except KeyError:
             self.log.debug("Item for %r not found", cluster)
             return
-        if cluster.special == 2 and cluster.files:
+        if cluster.hide_if_empty and cluster.files:
             cluster_item.setHidden(False)
         self.update_cluster(cluster, cluster_item)
-        item = QtGui.QTreeWidgetItem(cluster_item)
+        item = SortTreeWidgetItem(cluster_item)
         self.register_object(file, item)
         self.update_file(file, item)
 
     def add_files_to_cluster(self, cluster, files):
         cluster_item = self.item_from_object(cluster)
-        if cluster.special == 2 and cluster.files:
+        if cluster.hide_if_empty and cluster.files:
             cluster_item.setHidden(False)
         self.update_cluster(cluster, cluster_item)
         items = []
         for file in files:
-            item = QtGui.QTreeWidgetItem()
+            item = SortTreeWidgetItem()
             self.register_object(file, item)
             self.update_file(file, item)
             items.append(item)
@@ -256,8 +273,24 @@ class MainPanel(QtGui.QSplitter):
         if cluster_item.takeChild(index):
             self.unregister_object(file)
         self.update_cluster(cluster, cluster_item)
-        if cluster.special == 2 and not cluster.files:
+        if cluster.hide_if_empty and not cluster.files:
             cluster_item.setHidden(True)
+
+
+class NoSortTreeWidgetItem(QtGui.QTreeWidgetItem):
+
+    def __lt__ (self, other):
+        return False
+
+
+class SortTreeWidgetItem(QtGui.QTreeWidgetItem):
+
+    def __lt__(self, other):
+        column = self.treeWidget().sortColumn()
+        if column == 1:
+            return self.data(1, QtCore.Qt.UserRole).toInt() < other.data(1, QtCore.Qt.UserRole).toInt()
+        else:
+            return self.text(column).toLower() < other.text(column).toLower()
 
 
 class BaseTreeView(QtGui.QTreeWidget):
@@ -265,7 +298,7 @@ class BaseTreeView(QtGui.QTreeWidget):
     options = [
         TextOption("persist", "file_view_sizes", "250 40 100"),
         TextOption("persist", "album_view_sizes", "250 40 100"),
-        Option("setting", "color_modified", QtGui.QColor(0, 0, 0), QtGui.QColor),
+        Option("setting", "color_modified", QtGui.QColor(QtGui.QPalette.WindowText), QtGui.QColor),
         Option("setting", "color_saved", QtGui.QColor(0, 128, 0), QtGui.QColor),
         Option("setting", "color_error", QtGui.QColor(200, 0, 0), QtGui.QColor),
         Option("setting", "color_pending", QtGui.QColor(128, 128, 128), QtGui.QColor),
@@ -286,11 +319,22 @@ class BaseTreeView(QtGui.QTreeWidget):
         self.setDropIndicatorShown(True)
         self.setSelectionMode(QtGui.QAbstractItemView.ExtendedSelection)
 
+        # enable sorting, but don't actually use it by default
+        # XXX it would be nice to be able to go to the 'no sort' mode, but the
+        #     internal model that QTreeWidget uses doesn't support it
+        self.header().setSortIndicator(-1, QtCore.Qt.AscendingOrder)
+        self.setSortingEnabled(True)
+
+        self.expand_all_action = QtGui.QAction(_("&Expand all"), self)
+        self.connect(self.expand_all_action, QtCore.SIGNAL("triggered()"), self.expandAll)
+        self.collapse_all_action = QtGui.QAction(_("&Collapse all"), self)
+        self.connect(self.collapse_all_action, QtCore.SIGNAL("triggered()"), self.collapseAll)
+
         self.connect(self, QtCore.SIGNAL("doubleClicked(QModelIndex)"), self.activate_item)
 
-    def set_current_release_event(self, album, checked):
+    def _switch_release_version(self, album):
         index = self.sender().data().toInt()[0]
-        album.set_current_release_event(album.release_events[index])
+        album.switch_release_version(album.other_versions[index])
 
     def contextMenuEvent(self, event):
         item = self.itemAt(event.pos())
@@ -303,8 +347,10 @@ class BaseTreeView(QtGui.QTreeWidget):
         if isinstance(obj, Track):
             menu.addAction(self.window.edit_tags_action)
             plugin_actions = list(_track_actions)
-            if len(obj.linked_files) == 1:
+            if obj.num_linked_files == 1:
                 plugin_actions.extend(_file_actions)
+            if isinstance(obj, NonAlbumTrack):
+                menu.addAction(self.window.refresh_action)
         elif isinstance(obj, Cluster):
             menu.addAction(self.window.autotag_action)
             menu.addAction(self.window.analyze_action)
@@ -323,38 +369,47 @@ class BaseTreeView(QtGui.QTreeWidget):
         menu.addAction(self.window.save_action)
         menu.addAction(self.window.remove_action)
 
-        if isinstance(obj, Album):
-            releases_menu = QtGui.QMenu(_("&Releases"), menu)
-            #releases_menu.addActions(list(plugin_actions))
-            self._set_current_release_event = partial(self.set_current_release_event, obj)
-            for i, rel in enumerate(obj.release_events):
-                name = []
-                if rel.date:
-                    name.append(rel.date)
-                if rel.releasecountry:
-                    name.append(rel.releasecountry)
-                if rel.label:
-                    name.append(rel.label)
-                if rel.catalognumber:
-                    name.append(rel.catalognumber)
-                if rel.format:
-                    try: name.append(RELEASE_FORMATS[rel.format])
-                    except (KeyError): name.append(rel.format)
-                action = releases_menu.addAction(" / ".join(name).replace('&', '&&'))
-                action.setData(QtCore.QVariant(i))
-                action.setCheckable(True)
-                self.connect(action, QtCore.SIGNAL("triggered(bool)"), self._set_current_release_event)
-                if obj.current_release_event == rel:
-                    action.setChecked(True)
+        if isinstance(obj, Album) and not isinstance(obj, NatAlbum) and obj.loaded:
+            releases_menu = QtGui.QMenu(_("&Other versions"), menu)
             menu.addSeparator()
             menu.addMenu(releases_menu)
+            loading = releases_menu.addAction(_('Loading...'))
+            loading.setEnabled(False)
 
-        if plugin_actions is not None:
+            def _add_other_versions():
+                releases_menu.removeAction(loading)
+                switch_release_version = partial(self._switch_release_version, obj)
+                actions = []
+                for i, version in enumerate(obj.other_versions):
+                    keys = ("date", "country", "labels", "catnums", "tracks", "format")
+                    name = " / ".join([version[k] for k in keys if version[k]]).replace("&", "&&")
+                    if name == version["tracks"]:
+                        name = "%s / %s" % (_('[no release info]'), name)
+                    action = releases_menu.addAction(name)
+                    action.setData(QtCore.QVariant(i))
+                    action.setCheckable(True)
+                    if obj.id == version["mbid"]:
+                        action.setChecked(True)
+                    self.connect(action, QtCore.SIGNAL("triggered(bool)"), switch_release_version)
+
+            if not obj.rgloaded:
+                if obj.rgid:
+                    self.connect(obj, QtCore.SIGNAL("release_group_loaded"), _add_other_versions)
+                    kwargs = {"release-group": obj.rgid, "limit": 100}
+                    self.tagger.xmlws.browse_releases(obj._release_group_request_finished, **kwargs)
+            else:
+                _add_other_versions()
+
+        if plugin_actions:
             plugin_menu = QtGui.QMenu(_("&Plugins"), menu)
             plugin_menu.addActions(plugin_actions)
             plugin_menu.setIcon(self.panel.icon_plugins)
             menu.addSeparator()
             menu.addMenu(plugin_menu)
+
+        if isinstance(obj, Cluster) or isinstance(obj, Album):
+            menu.addAction(self.expand_all_action)
+            menu.addAction(self.collapse_all_action)
 
         menu.exec_(event.globalPos())
         event.accept()
@@ -388,7 +443,16 @@ class BaseTreeView(QtGui.QTreeWidget):
 
     def mimeTypes(self):
         """List of MIME types accepted by this view."""
-        return ["text/uri-list", "application/picard.file-list", "application/picard.album-list"]
+        return ["text/uri-list",
+                "application/picard.file-list",
+                "application/picard.album-list"]
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.setDropAction(QtCore.Qt.CopyAction)
+            event.accept()
+        else:
+            event.acceptProposedAction()
 
     def startDrag(self, supportedActions):
         """Start drag, *without* using pixmap."""
@@ -459,37 +523,52 @@ class BaseTreeView(QtGui.QTreeWidget):
                     files.append(filename)
             elif url.scheme() == "http":
                 path = unicode(url.path())
-                match = re.search(r"release/([0-9a-z\-]{36})", path)
-                if match:
-                    self.tagger.load_album(match.group(1))
+                match = re.search(r"/(release|recording)/([0-9a-z\-]{36})", path)
+                if not match:
+                    continue
+                entity = match.group(1)
+                mbid = match.group(2)
+                if entity == "release":
+                    self.tagger.load_album(mbid)
+                elif entity == "recording":
+                    self.tagger.load_nat(mbid)
         if files:
             self.tagger.add_files(files)
 
     def dropEvent(self, event):
-        data = event.mimeData()
+        return QtGui.QTreeView.dropEvent(self, event)
+
+    def dropMimeData(self, parent, index, data, action):
         target = None
-        item = self.itemAt(event.pos())
-        if item:
-            target = self.panel.object_from_item(item)
-        if not target:
-            target = self.tagger.unmatched_files
+        if parent:
+            if index == parent.childCount():
+                item = parent
+            else:
+                item = parent.child(index)
+            if item is not None:
+                target = self.panel.object_from_item(item)
         self.log.debug("Drop target = %r", target)
+        handled = False
         # text/uri-list
         urls = data.urls()
         if urls:
+            if target is None:
+                target = self.tagger.unmatched_files
             self.drop_urls(urls, target)
+            handled = True
         # application/picard.file-list
         files = data.data("application/picard.file-list")
         if files:
             files = [self.tagger.get_file_by_id(int(file_id)) for file_id in str(files).split("\n")]
             self.drop_files(files, target)
+            handled = True
         # application/picard.album-list
         albums = data.data("application/picard.album-list")
         if albums:
-            albums = [self.tagger.get_album_by_id(albumsId) for albumsId in str(albums).split("\n")]
+            albums = [self.tagger.load_album(id) for id in str(albums).split("\n")]
             self.drop_albums(albums, target)
-        event.setDropAction(QtCore.Qt.CopyAction)
-        event.accept()
+            handled = True
+        return handled
 
     def activate_item(self, index):
         obj = self.panel.object_from_item(self.itemFromIndex(index))
@@ -499,27 +578,30 @@ class BaseTreeView(QtGui.QTreeWidget):
     def add_cluster(self, cluster, parent_item=None):
         if parent_item is None:
             parent_item = self.clusters
-        cluster_item = QtGui.QTreeWidgetItem(parent_item)
+        if cluster.special:
+            cluster_item = NoSortTreeWidgetItem(parent_item)
+        else:
+            cluster_item = SortTreeWidgetItem(parent_item)
         cluster_item.setIcon(0, self.panel.icon_dir)
         self.panel.update_cluster(cluster, cluster_item)
         self.panel.register_object(cluster, cluster_item)
         for file in cluster.files:
-            item = QtGui.QTreeWidgetItem(cluster_item)
+            item = SortTreeWidgetItem(cluster_item)
             self.panel.register_object(file, item)
             self.panel.update_file(file, item)
-        if cluster.special == 2 and not cluster.files:
+        if cluster.hide_if_empty and not cluster.files:
             cluster_item.setHidden(True)
 
 class FileTreeView(BaseTreeView):
 
     def __init__(self, window, parent=None):
         BaseTreeView.__init__(self, window, parent)
-        self.unmatched_files = QtGui.QTreeWidgetItem(self)
+        self.unmatched_files = NoSortTreeWidgetItem(self)
         self.unmatched_files.setIcon(0, self.panel.icon_dir)
         self.panel.register_object(self.tagger.unmatched_files, self.unmatched_files)
         self.panel.update_cluster(self.tagger.unmatched_files)
         self.setItemExpanded(self.unmatched_files, True)
-        self.clusters = QtGui.QTreeWidgetItem(self)
+        self.clusters = NoSortTreeWidgetItem(self)
         self.clusters.setText(0, _(u"Clusters"))
         self.clusters.setIcon(0, self.panel.icon_dir)
         self.panel.register_object(self.tagger.clusters, self.clusters)
@@ -557,23 +639,23 @@ class AlbumTreeView(BaseTreeView):
             except KeyError:
                 self.log.debug("Item for %r not found", track)
                 return
-        if len(track.linked_files) == 1:
+        if track.num_linked_files == 1:
             file = track.linked_files[0]
             color = self.track_colors[file.state]
             icon = self.panel.decide_file_icon(file)
-            
+
             # remove old files
             for i in range(item.childCount()):
                 file_item = item.takeChild(0)
                 self.panel.unregister_object(item=file_item)
         else:
             color = self.palette().text().color()
-            bgcolor = get_match_color(1)
+            bgcolor = get_match_color(1, self.palette().base().color())
             icon = self.panel.icon_note
-            
+
             #Add linked files (there will either be 0 or >1)
             oldnum = item.childCount()
-            newnum = len(track.linked_files)
+            newnum = track.num_linked_files
             # remove old items
             if oldnum > newnum:
                 for i in range(oldnum - newnum):
@@ -590,22 +672,23 @@ class AlbumTreeView(BaseTreeView):
             # add new items
             if newnum > oldnum:
                 for i in range(oldnum, newnum):
-                    file_item = QtGui.QTreeWidgetItem(item, file_item)
+                    file_item = NoSortTreeWidgetItem(item, file_item)
                     file = track.linked_files[i]
                     self.panel.register_object(file, file_item)
                     self.panel.update_file(file, file_item)
-            self.expandItem (item)
+            self.expandItem(item)
         item.setIcon(0, icon)
         for i, column in enumerate(self.columns):
             text, similarity = track.column(column[1])
             item.setText(i, text)
             item.setTextColor(i, color)
-            item.setBackgroundColor(i, get_match_color(similarity))
+            item.setBackgroundColor(i, get_match_color(similarity, self.palette().base().color()))
+        item.setData(1, QtCore.Qt.UserRole, QtCore.QVariant(track.metadata.length or 0))
         if update_album:
             self.update_album(track.album, update_tracks=False)
 
     def add_album(self, album):
-        item = QtGui.QTreeWidgetItem(self)
+        item = SortTreeWidgetItem(self)
         self.panel.register_object(album, item)
         item.setIcon(0, self.panel.icon_cd)
         for i, column in enumerate(self.columns):
@@ -621,8 +704,6 @@ class AlbumTreeView(BaseTreeView):
         except KeyError:
             self.log.debug("Item for %r not found", album)
             return
-        for i, column in enumerate(self.columns):
-            album_item.setText(i, album.column(column[1]))
         if update_tracks:
             oldnum = album_item.childCount() - 1
             newnum = len(album.tracks)
@@ -642,10 +723,21 @@ class AlbumTreeView(BaseTreeView):
             # add new items
             if newnum > oldnum:
                 for i in range(oldnum, newnum):
-                    item = QtGui.QTreeWidgetItem(album_item, item)
+                    item = NoSortTreeWidgetItem(album_item, item)
+                    item.setHidden(False) # Workaround to make sure the parent state gets updated
                     track = album.tracks[i]
                     self.panel.register_object(track, item)
                     self.update_track(track, item, update_album=False)
+        for i, column in enumerate(self.columns):
+            font = album_item.font(i)
+            if album.is_complete():
+                icon = self.panel.icon_cd_saved
+            else:
+                icon = self.panel.icon_cd
+            album_item.setIcon(0, icon)
+            album_item.setFont(i, font)
+            album_item.setText(i, album.column(column[1]))
+        album_item.setData(1, QtCore.Qt.UserRole, QtCore.QVariant(album.metadata.length or 0))
         if album_item.isSelected():
             self.window.updateSelection(self.panel.selected_objects())
 
@@ -655,3 +747,6 @@ class AlbumTreeView(BaseTreeView):
             for track in album.tracks:
                 self.panel.unregister_object(track)
             self.panel.unregister_object(album)
+            if album == self.tagger.nats:
+                self.tagger.nats = None
+

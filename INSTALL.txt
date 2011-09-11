@@ -6,24 +6,27 @@ Dependencies
 
 Before installing Picard, you need to have these libraries:
 
- * PyQt 4.1 with Qt 4.2 or newer
-   http://www.riverbankcomputing.co.uk/pyqt/
+ * Python 2.5 or newer (Picard will not work with Python 3)
+   http://python.org
+ 
+ * PyQt 4.5 or newer
+   http://www.riverbankcomputing.co.uk/software/pyqt/intro
    http://www.trolltech.com/products/qt/
 
- * Mutagen 1.9 or newer
-   http://www.sacredchao.net/quodlibet/wiki/Development/Mutagen
-
- * ctypes (optional, only needed for Python 2.4)
-   http://python.net/crew/theller/ctypes/
+ * Mutagen 1.20 or newer
+   http://code.google.com/p/quodlibet/wiki/Development/Mutagen
 
  * libdiscid (optional)
+   Required for CD lookups.
    http://musicbrainz.org/doc/libdiscid
 
  * FFmpeg (optional)
+   Required for audio fingerprinting.
    http://ffmpeg.mplayerhq.hu/
 
  * libofa (optional)
-   http://www.musicip.com/dns/downloads.jsp
+   Required for audio fingerprinting.
+   http://code.google.com/p/musicip-libofa/
 
 
 Installation
@@ -53,3 +56,15 @@ need to build the C extensions and locales manually:
 And to start Picard use:
 
   python tagger.py
+
+
+Running the Test Suite
+----------------------
+
+To run the included tests, follow the instructions for "Running From
+the Source Tree".  Afterward you can run the tests using setup.py:
+
+  python setup.py test
+
+Alternatively, use a test runner such as nose.
+

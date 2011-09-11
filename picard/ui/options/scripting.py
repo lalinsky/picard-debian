@@ -32,7 +32,7 @@ class TaggerScriptSyntaxHighlighter(QtGui.QSyntaxHighlighter):
         self.func_fmt = QtGui.QTextCharFormat()
         self.func_fmt.setFontWeight(QtGui.QFont.Bold)
         self.func_fmt.setForeground(QtCore.Qt.blue)
-        self.var_re = QtCore.QRegExp(r"%[_a-zA-Z0-9]*%")
+        self.var_re = QtCore.QRegExp(r"%[_a-zA-Z0-9:]*%")
         self.var_fmt = QtGui.QTextCharFormat()
         self.var_fmt.setForeground(QtCore.Qt.darkCyan)
         self.escape_re = QtCore.QRegExp(r"\\.")
@@ -50,11 +50,11 @@ class TaggerScriptSyntaxHighlighter(QtGui.QSyntaxHighlighter):
 
     def highlightBlock(self, text):
         for expr, fmt, a, b in self.rules:
-            index = text.indexOf(expr)
+            index = expr.indexIn(text)
             while index >= 0:
                 length = expr.matchedLength()
                 self.setFormat(index + a, length + b, fmt)
-                index = text.indexOf(expr, index + length + b)
+                index = expr.indexIn(text, index + length + b)
 
 
 class ScriptingOptionsPage(OptionsPage):
@@ -70,16 +70,29 @@ class ScriptingOptionsPage(OptionsPage):
         TextOption("setting", "tagger_script", ""),
     ]
 
+    STYLESHEET_ERROR = "QWidget { background-color: #f55; color: white; font-weight:bold }"
+
     def __init__(self, parent=None):
         super(ScriptingOptionsPage, self).__init__(parent)
         self.ui = Ui_ScriptingOptionsPage()
         self.ui.setupUi(self)
         self.highlighter = TaggerScriptSyntaxHighlighter(self.ui.tagger_script.document())
+        self.connect(self.ui.tagger_script, QtCore.SIGNAL("textChanged()"), self.live_checker)
+
+    def live_checker(self):
+        self.ui.script_error.setStyleSheet("");
+        self.ui.script_error.setText("")
+        try:
+            self.check()
+        except OptionsCheckError, e:
+            self.ui.script_error.setStyleSheet(self.STYLESHEET_ERROR);
+            self.ui.script_error.setText(e.info)
+            return
 
     def check(self):
         parser = ScriptParser()
         try:
-            parser.parse(unicode(self.ui.tagger_script.toPlainText()))
+            parser.eval(unicode(self.ui.tagger_script.toPlainText()))
         except Exception, e:
             raise OptionsCheckError(_("Script Error"), str(e))
 
@@ -90,6 +103,9 @@ class ScriptingOptionsPage(OptionsPage):
     def save(self):
         self.config.setting["enable_tagger_script"] = self.ui.enable_tagger_script.isChecked()
         self.config.setting["tagger_script"] = self.ui.tagger_script.toPlainText()
+
+    def display_error(self, error):
+        pass
 
 
 register_options_page(ScriptingOptionsPage)

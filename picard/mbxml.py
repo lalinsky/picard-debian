@@ -20,28 +20,31 @@
 import re
 import unicodedata
 from picard.util import format_time, translate_artist
+from picard.const import RELEASE_FORMATS
 
+
+AMAZON_ASIN_URL_REGEX = re.compile(r'^http://(?:www.)?(.*?)(?:\:[0-9]+)?/.*/([0-9B][0-9A-Z]{9})(?:[^0-9A-Z]|$)')
 
 _artist_rel_types = {
-    "Composer": "composer",
-    "Conductor": "conductor",
-    "ChorusMaster": "conductor",
-    "PerformingOrchestra": "performer:orchestra",
-    "Arranger": "arranger",
-    "Orchestrator": "arranger",
-    "Instrumentator": "arranger",
-    "Lyricist": "lyricist",
-    "Librettist": "lyricist",
-    "Remixer": "remixer",
-    "Producer": "producer",
-    "Engineer": "engineer",
-    "Audio": "engineer",
+    "composer": "composer",
+    "conductor": "conductor",
+    "chorus master": "conductor",
+    "performing orchestra": "performer:orchestra",
+    "arranger": "arranger",
+    "orchestrator": "arranger",
+    "instrumentator": "arranger",
+    "lyricist": "lyricist",
+    "librettist": "lyricist",
+    "remixer": "remixer",
+    "producer": "producer",
+    "engineer": "engineer",
+    "audio": "engineer",
     #"Mastering": "engineer",
-    "Sound": "engineer",
-    "LiveSound": "engineer",
-    "Mix": "mixer",
+    "sound": "engineer",
+    "live sound": "engineer",
+    "mix": "mixer",
     #"Recording": "engineer",
-    "MixDJ": "djmixer",
+    "mix-DJ": "djmixer",
 }
 
 
@@ -49,9 +52,10 @@ def _decamelcase(text):
     return re.sub(r'([A-Z])', r' \1', text).strip()
 
 
-_EXTRA_ATTRS = ['Guest', 'Additional', 'Minor']
+_REPLACE_MAP = {}
+_EXTRA_ATTRS = ['guest', 'additional', 'minor']
 def _parse_attributes(attrs):
-    attrs = map(_decamelcase, attrs)
+    attrs = [_decamelcase(_REPLACE_MAP.get(a, a)) for a in attrs]
     prefix = ' '.join([a for a in attrs if a in _EXTRA_ATTRS])
     attrs = [a for a in attrs if a not in _EXTRA_ATTRS]
     if len(attrs) > 1:
@@ -65,128 +69,242 @@ def _parse_attributes(attrs):
 
 def _relations_to_metadata(relation_lists, m, config):
     for relation_list in relation_lists:
-        if relation_list.target_type == 'Artist':
+        if relation_list.target_type == 'artist':
             for relation in relation_list.relation:
                 value = relation.artist[0].name[0].text
-                if config and config.setting['translate_artist_names']:
+                if config.setting['translate_artist_names']:
                     value = translate_artist(value, relation.artist[0].sort_name[0].text)
                 reltype = relation.type
-                attribs = relation.attribs.get('attributes', '').split()
-                if reltype == 'Vocal':
+                attribs = []
+                if 'attribute_list' in relation.children:
+                    attribs = [a.text for a in relation.attribute_list[0].attribute]
+                if reltype == 'vocal':
                     name = 'performer:' + ' '.join([_parse_attributes(attribs), 'vocal']).strip()
-                elif reltype == 'Instrument':
+                elif reltype == 'instrument':
                     name = 'performer:' + _parse_attributes(attribs)
-                elif reltype == 'Performer':
+                elif reltype == 'performer':
                     name = 'performer:' + _parse_attributes(attribs)
                 else:
                     try:
-                        name = _artist_rel_types[relation.type]
+                        name = _artist_rel_types[reltype]
                     except KeyError:
                         continue
-                m.add(name, value)
-        # TODO: Release, Track, URL relations          
+                if value not in m[name]:
+                    m.add(name, value)
+        elif relation_list.target_type == 'work':
+            for relation in relation_list.relation:
+                if relation.type == 'performance':
+                    work = relation.work[0]
+                    if 'relation_list' in work.children:
+                        _relations_to_metadata(work.relation_list, m, config)
+        elif relation_list.target_type == 'url':
+            for relation in relation_list.relation:
+                if relation.type == 'amazon asin':
+                    url = relation.target[0].text
+                    match = AMAZON_ASIN_URL_REGEX.match(url)
+                    if match is not None and 'asin' not in m:
+                        m['asin'] = match.group(2)
 
 
-def _set_artist_item(m, release, albumname, name, value):
+def artist_credit_from_node(node, config):
+    artist = ""
+    artistsort = ""
+    for credit in node.name_credit:
+        a = credit.artist[0]
+        artistsort += a.sort_name[0].text
+        if 'name' in credit.children and not config.setting["standardize_artists"]:
+            artist += credit.name[0].text
+        else:
+            artist += a.name[0].text
+        if 'joinphrase' in credit.attribs:
+            artist += credit.joinphrase
+            artistsort += credit.joinphrase
+    return (artist, artistsort)
+
+
+def artist_credit_to_metadata(node, m, config, release=False):
+    ids = [n.artist[0].id for n in node.name_credit]
+    artist, artistsort = artist_credit_from_node(node, config)
     if release:
-        m[albumname] = value
-        if name not in m:
-            m[name] = value
+        m["musicbrainz_albumartistid"] = ids
+        m["albumartist"] = artist
+        m["albumartistsort"] = artistsort
     else:
-        m[name] = value
+        m["musicbrainz_artistid"] = ids
+        m["artist"] = artist
+        m["artistsort"] = artistsort
 
 
-def artist_to_metadata(node, m, release=False):
-    _set_artist_item(m, release, 'musicbrainz_albumartistid', 'musicbrainz_artistid', node.id)
+def label_info_from_node(node):
+    labels = []
+    catalog_numbers = []
+    if node.count != "0":
+        for label_info in node.label_info:
+            if 'label' in label_info.children:
+                labels.append(label_info.label[0].name[0].text)
+            if 'catalog_number' in label_info.children:
+                catalog_numbers.append(label_info.catalog_number[0].text)
+    return (labels, catalog_numbers)
+
+
+def media_formats_from_node(node):
+    formats = {}
+    for medium in node.medium:
+        if "format" in medium.children:
+            text = medium.format[0].text
+            formats[text] = formats.get(text, 0) + 1
+    if formats:
+        return " + ".join([
+            (str(j) + u"×" if j > 1 else "") + RELEASE_FORMATS.get(i, i)
+            for i, j in formats.items()])
+    else:
+        return ""
+
+
+def track_to_metadata(node, track, config):
+    m = track.metadata
+    recording_to_metadata(node.recording[0], track, config)
+    transl = m['releasestatus'] == "pseudo-release"
+    # overwrite with data we have on the track
     for name, nodes in node.children.iteritems():
         if not nodes:
             continue
-        if name == 'name':
-            _set_artist_item(m, release, 'albumartist', 'artist', nodes[0].text)
-        elif name == 'sort_name':
-            _set_artist_item(m, release, 'albumartistsort', 'artistsort', nodes[0].text)
+        if name == 'title':
+            if not config.setting["standardize_tracks"] or transl:
+                m['title'] = nodes[0].text
+        elif name == 'position':
+            m['tracknumber'] = nodes[0].text
+        elif name == 'length' and nodes[0].text:
+            m.length = int(nodes[0].text)
+        elif name == 'artist_credit':
+            if not config.setting["standardize_artists"] or transl:
+                artist_credit_to_metadata(nodes[0], m, config)
 
 
-def track_to_metadata(node, m, config=None, track=None):
-    m['musicbrainz_trackid'] = node.attribs['id']
+def recording_to_metadata(node, track, config):
+    m = track.metadata
     m.length = 0
+    m['musicbrainz_trackid'] = node.attribs['id']
     for name, nodes in node.children.iteritems():
         if not nodes:
             continue
         if name == 'title':
             m['title'] = nodes[0].text
-        elif name == 'duration':
+        elif name == 'length' and nodes[0].text:
             m.length = int(nodes[0].text)
-        elif name == 'artist':
-            artist_to_metadata(nodes[0], m)
+        elif name == 'disambiguation':
+            m['~recordingcomment'] = nodes[0].text
+        elif name == 'artist_credit':
+            artist_credit_to_metadata(nodes[0], m, config)
         elif name == 'relation_list':
             _relations_to_metadata(nodes, m, config)
-        elif name == 'release_list':
-            release_to_metadata(nodes[0].release[0], m)
         elif name == 'tag_list':
             add_folksonomy_tags(nodes[0], track)
+        elif name == 'user_tag_list':
+            add_user_folksonomy_tags(nodes[0], track)
+        elif name == 'isrc_list':
+            add_isrcs_to_metadata(nodes[0], m)
+        elif name == 'user_rating':
+            m['~rating'] = nodes[0].text
 
 
-def release_to_metadata(node, m, config=None, album=None):
+def medium_to_metadata(node, m):
+    for name, nodes in node.children.iteritems():
+        if not nodes:
+            continue
+        if name == 'position':
+            m['discnumber'] = nodes[0].text
+        elif name == 'track_list':
+            m['totaltracks'] = nodes[0].count
+        elif name == 'title':
+            m['discsubtitle'] = nodes[0].text
+        elif name == 'format':
+            m['media'] = nodes[0].text
+
+
+def release_to_metadata(node, m, config, album=None):
     """Make metadata dict from a XML 'release' node."""
     m['musicbrainz_albumid'] = node.attribs['id']
 
-    # Parse release type and status
+    if "status" in node.children:
+        m['releasestatus'] = node.status[0].text.lower()
+    transl = m['releasestatus'] == "pseudo-release"
+
+    for name, nodes in node.children.iteritems():
+        if not nodes:
+            continue
+        if name == 'release_group':
+            release_group_to_metadata(nodes[0], m, config, album)
+        elif name == 'title':
+            if not config.setting["standardize_releases"] or transl:
+                m['album'] = nodes[0].text
+        elif name == 'disambiguation':
+            m['~releasecomment'] = nodes[0].text
+        elif name == 'asin':
+            m['asin'] = nodes[0].text
+        elif name == 'artist_credit':
+            if not config.setting["standardize_artists"] or transl:
+                artist_credit_to_metadata(nodes[0], m, config, release=True)
+        elif name == 'date':
+            m['date'] = nodes[0].text
+        elif name == 'country':
+            m['releasecountry'] = nodes[0].text
+        elif name == 'barcode':
+            m['barcode'] = nodes[0].text
+        elif name == 'relation_list':
+            _relations_to_metadata(nodes, m, config)
+        elif name == 'label_info_list' and nodes[0].count != '0':
+            m['label'], m['catalognumber'] = label_info_from_node(nodes[0])
+        elif name == 'text_representation':
+            if 'language' in nodes[0].children:
+                m['language'] = nodes[0].language[0].text
+            if 'script' in nodes[0].children:
+                m['script'] = nodes[0].script[0].text
+        elif name == 'tag_list':
+            add_folksonomy_tags(nodes[0], album)
+        elif name == 'user_tag_list':
+            add_user_folksonomy_tags(nodes[0], album)
+
+
+def release_group_to_metadata(node, m, config, album=None):
+    """Make metadata dict from a XML 'release-group' node taken from inside a 'release' node."""
     if 'type' in node.attribs:
-        types = node.attribs['type'].split()
-        for t in types:
-            if t in ('Official', 'Promotion', 'Bootleg', 'PseudoRelease'):
-                m['releasestatus'] = t.lower()
-            else:
-                m['releasetype'] = t.lower()
+        m['releasetype'] = node.type.lower()
+    transl = m['releasestatus'] == "pseudo-release"
 
     for name, nodes in node.children.iteritems():
         if not nodes:
             continue
         if name == 'title':
-            m['album'] = nodes[0].text
-        elif name == 'asin':
-            m['asin'] = nodes[0].text
-        elif name == 'artist':
-            artist_to_metadata(nodes[0], m, True)
-        elif name == 'relation_list':
-            _relations_to_metadata(nodes, m, config)
-        elif name == 'text_representation':
-            if 'language' in nodes[0].attribs:
-                m['language'] = nodes[0].attribs['language'].lower()
-            if 'script' in nodes[0].attribs:
-                m['script'] = nodes[0].attribs['script']
-        elif name == 'release_event_list':
-            for relevent in nodes[0].event:
-                args = {}
-                try: args['date'] = relevent.date
-                except (AttributeError, IndexError): pass
-                try: args['releasecountry'] = relevent.country
-                except (AttributeError, IndexError): pass
-                try: args['catalognumber'] = relevent.catalog_number
-                except (AttributeError, IndexError): pass
-                try: args['barcode'] = relevent.barcode
-                except (AttributeError, IndexError): pass
-                try: args['label'] = relevent.label[0].name[0].text
-                except (AttributeError, IndexError): pass
-                try: args['format'] = relevent.format
-                except (AttributeError, IndexError): pass
-                if album:
-                    rel = album.add_release_event(**args)
-        elif name == 'track_list':
-            if 'track' in nodes[0].children:
-                m['totaltracks'] = str(len(nodes[0].track))
-            if 'offset' in nodes[0].attribs:
-                m['tracknumber'] = str(int(nodes[0].attribs['offset']) + 1)
-            if 'count' in nodes[0].attribs:
-                m['totaltracks'] = nodes[0].attribs['count']
+            if config.setting["standardize_releases"] and not transl:
+                m['album'] = node.title[0].text
+        elif name == 'artist_credit':
+            if config.setting["standardize_artists"] and not transl:
+                artist_credit_to_metadata(nodes[0], m, config, release=True)
+        elif name == 'first_release_date':
+            m['~originaldate'] = nodes[0].text
         elif name == 'tag_list':
             add_folksonomy_tags(nodes[0], album)
+        elif name == 'user_tag_list':
+            add_user_folksonomy_tags(nodes[0], album)
 
 
 def add_folksonomy_tags(node, obj):
     if obj and 'tag' in node.children:
         for tag in node.tag:
-            name = tag.text
+            name = tag.name[0].text
             count = int(tag.attribs['count'])
             obj.add_folksonomy_tag(name, count)
+
+
+def add_user_folksonomy_tags(node, obj):
+    if obj and 'user_tag' in node.children:
+        for tag in node.user_tag:
+            name = tag.name[0].text
+            obj.add_folksonomy_tag(name, 1)
+
+
+def add_isrcs_to_metadata(node, metadata):
+    if 'isrc' in node.children:
+        for isrc in node.isrc:
+            metadata.add('isrc', isrc.id)

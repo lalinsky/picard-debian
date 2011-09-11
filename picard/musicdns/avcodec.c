@@ -27,16 +27,21 @@
 #ifdef USE_OLD_FFMPEG_LOCATIONS
 #include <avcodec.h>
 #include <avformat.h>
+#include <avio.h>
 #else
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libavformat/avio.h>
 #endif
 #include <Python.h>
+
+#if (LIBAVCODEC_VERSION_INT < ((52<<16)+(64<<8)+0))
+#define AVMEDIA_TYPE_AUDIO CODEC_TYPE_AUDIO
+#endif
 
 #ifdef _WIN32
 
 #include <string.h>
-#include <avio.h>
 #include <fcntl.h>
 #include <windows.h>
 
@@ -64,7 +69,7 @@ ufile_open(URLContext *h, const char *filename, int flags)
     	  *w_ptr = a | (b << 4) | (c << 8) | (d << 12);
     	  if (*w_ptr == 0)
 					break;
-				w_ptr++;				   
+				w_ptr++;
 		}
 		*w_ptr = 0;
 
@@ -84,7 +89,7 @@ ufile_open(URLContext *h, const char *filename, int flags)
         fd = -1;
         size = wcslen(w_filename) + 2;
         ansi_filename = malloc(size);
-        if (ansi_filename) { 
+        if (ansi_filename) {
             if (WideCharToMultiByte(CP_ACP, 0, w_filename, -1, ansi_filename, size, NULL, NULL) > 0) {
 	  	          fd = _open(ansi_filename, access, 0666);
 						}
@@ -114,8 +119,13 @@ ufile_write(URLContext *h, unsigned char *buf, int size)
     return _write(fd, buf, size);
 }
 
+#if LIBAVFORMAT_VERSION_MAJOR >= 52
+static int64_t
+ufile_seek(URLContext *h, int64_t pos, int whence)
+#else
 static offset_t
 ufile_seek(URLContext *h, offset_t pos, int whence)
+#endif
 {
     int fd = (size_t)h->priv_data;
     return _lseek(fd, pos, whence);
@@ -164,8 +174,8 @@ decode(PyObject *self, PyObject *args)
     PyObject *filename;
     AVPacket packet;
     unsigned int i;
-    int buffer_size, channels, sample_rate, size, len, output_size;
-    uint8_t *buffer, *buffer_ptr, *data;
+    int buffer_size, channels, sample_rate, len, output_size;
+    uint8_t *buffer, *buffer_ptr;
     PyThreadState *_save;
 
 #ifdef _WIN32
@@ -202,13 +212,13 @@ decode(PyObject *self, PyObject *args)
 		*e_ptr++ = 0x20;
 		*e_ptr++ = 0x20;
 		*e_ptr++ = 0x20;
-		/* copy ASCII filename to the end for extension-based format detection */		
+		/* copy ASCII filename to the end for extension-based format detection */
 		w_ptr = w_filename;
 		while (*w_ptr) {
 		    *e_ptr++ = (*w_ptr++) & 0xFF;
 		}
 		*e_ptr = 0;
-		
+
     Py_UNBLOCK_THREADS
     if (av_open_input_file(&format_context, e_filename, NULL, 0, NULL) != 0) {
         Py_BLOCK_THREADS
@@ -245,7 +255,7 @@ decode(PyObject *self, PyObject *args)
     codec_context = NULL;
     for (i = 0; i < format_context->nb_streams; i++) {
         codec_context = (AVCodecContext *)format_context->streams[i]->codec;
-        if (codec_context && codec_context->codec_type == CODEC_TYPE_AUDIO)
+        if (codec_context && codec_context->codec_type == AVMEDIA_TYPE_AUDIO)
             break;
     }
     if (codec_context == NULL) {
@@ -271,26 +281,33 @@ decode(PyObject *self, PyObject *args)
     sample_rate = codec_context->sample_rate;
 
     buffer_size = 135 * channels * sample_rate * 2;
-    buffer = (uint8_t *)malloc(buffer_size + AVCODEC_MAX_AUDIO_FRAME_SIZE);
+    buffer = (uint8_t *)av_malloc(buffer_size + AVCODEC_MAX_AUDIO_FRAME_SIZE);
     buffer_ptr = buffer;
     memset(buffer, 0, buffer_size);
+
+    AVPacket avpkt;
+    av_init_packet(&avpkt);
 
     while (buffer_size > 0) {
         if (av_read_frame(format_context, &packet) < 0)
             break;
 
-        size = packet.size;
-        data = packet.data;
+        avpkt.size = packet.size;
+        avpkt.data = packet.data;
 
-        while (size > 0) {
+        while (avpkt.size > 0) {
             output_size = buffer_size + AVCODEC_MAX_AUDIO_FRAME_SIZE;
-            len = avcodec_decode_audio2(codec_context, (int16_t *)buffer_ptr, &output_size, data, size);
+#if (LIBAVCODEC_VERSION_INT <= ((52<<16) + (25<<8) + 0))
+            len = avcodec_decode_audio2(codec_context, (int16_t *)buffer_ptr, &output_size, avpkt.data, avpkt.size);
+#else
+            len = avcodec_decode_audio3(codec_context, (int16_t *)buffer_ptr, &output_size, &avpkt);
+#endif
 
             if (len < 0)
                 break;
 
-            size -= len;
-            data += len;
+            avpkt.size -= len;
+            avpkt.data += len;
 
             if (output_size <= 0)
                 continue;
@@ -305,6 +322,9 @@ decode(PyObject *self, PyObject *args)
             av_free_packet(&packet);
     }
 
+    if (avpkt.data)
+        av_free_packet(&avpkt);
+
     if (codec_context)
         avcodec_close(codec_context);
 
@@ -314,7 +334,7 @@ decode(PyObject *self, PyObject *args)
     Py_BLOCK_THREADS
 
     return Py_BuildValue("(N,i,i,i,i)",
-        PyCObject_FromVoidPtr(buffer, free),
+        PyCObject_FromVoidPtr(buffer, av_free),
         (buffer_ptr - buffer) / 2,
         sample_rate,
         channels == 2 ? 1 : 0,

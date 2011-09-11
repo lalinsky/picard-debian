@@ -8,9 +8,11 @@ from StringIO import StringIO
 from ConfigParser import RawConfigParser
 from picard import __version__
 
+from picard.const import UI_LANGUAGES
 
-if sys.version_info < (2, 4):
-    print "*** You need Python 2.4 or higher to use Picard."
+
+if sys.version_info < (2, 5):
+    print "*** You need Python 2.5 or higher to use Picard."
 
 
 args = {}
@@ -26,8 +28,8 @@ try:
           'optimize'       : 2,
           'argv_emulation' : True,
           'iconfile'       : 'picard.icns',
-          'frameworks'     : ['/opt/local/lib/libofa.0.dylib', 'libiconv.2.dylib', '/opt/local/lib/libdiscid.1.dylib'],
-          'includes'       : ['sip', 'PyQt4._qt', 'picard.util.astrcmp', 'picard.musicdns.ofa', 'picard.musicdns.avcodec' ],
+          'frameworks'     : ['libofa.0.dylib', 'libiconv.2.dylib', 'libdiscid.0.dylib'],
+          'includes'       : ['sip', 'PyQt4.Qt', 'picard.util.astrcmp', 'picard.musicdns.ofa', 'picard.musicdns.avcodec'],
           'excludes'       : ['pydoc'],
           'plist'    : { 'CFBundleName' : 'MusicBrainz Picard',
                          'CFBundleGetInfoString' : 'Picard, the next generation MusicBrainz tagger (see http://wiki.musicbrainz.org/PicardTagger',
@@ -449,7 +451,7 @@ args2 = {
                  'picard.plugins', 'picard.formats',
                  'picard.formats.mutagenext', 'picard.ui',
                  'picard.ui.options', 'picard.util'),
-    'locales': [('picard', os.path.split(po)[1][:-3], po) for po in glob.glob('po/*.po')],
+    'locales': [('picard', lang[0], os.path.join('po', lang[0]+".po")) for lang in UI_LANGUAGES],
     'ext_modules': ext_modules,
     'data_files': [],
     'cmdclass': {
@@ -484,25 +486,38 @@ try:
             generate_file('scripts/picard.py2exe.in', 'scripts/picard', {})
             self.distribution.data_files.append(
                 ("", ["discid.dll", "libfftw3-3.dll", "libofa.dll",
-                      "msvcp71.dll"]))
+                      "python27.dll", "msvcr90.dll", "msvcp90.dll",
+                      "avcodec-52.dll", "avformat-52.dll", "avutil-50.dll",
+                      "libstdc++-6.dll"]))
             for locale in self.distribution.locales:
                 self.distribution.data_files.append(
                     ("locale/" + locale[1] + "/LC_MESSAGES",
                      ["build/locale/" + locale[1] + "/LC_MESSAGES/" + locale[0] + ".mo"]))
-            #self.distribution.data_files.append(
-            #    ("imageformats", ["C:\\Qt\\4.2.3\\plugins\\imageformats\\qjpeg1.dll"]))
+            self.distribution.data_files.append(
+                ("imageformats", [find_file_in_path("PyQt4/plugins/imageformats/qgif4.dll"),
+                                  find_file_in_path("PyQt4/plugins/imageformats/qjpeg4.dll"),
+                                  find_file_in_path("PyQt4/plugins/imageformats/qtiff4.dll")]))
+            self.distribution.data_files.append(
+                ("plugins", ["contrib/plugins/discnumber.py",
+                             "contrib/plugins/classicdiscnumber.py",
+                             "contrib/plugins/titlecase.py",
+                             "contrib/plugins/featartist.py"]))
 
             py2exe.run(self)
             print "*** creating the NSIS setup script ***"
-            pathname = "installer/picard-setup.nsi"
+            pathname = "installer\picard-setup.nsi"
             generate_file(pathname + ".in", pathname, 
                           {'name': 'MusicBrainz Picard',
-                           'version': __version__})
+                           'version': __version__,
+                           'description': 'The next generation MusicBrainz tagger.',
+                           'url': 'http://wiki.musicbrainz.org/PicardTagger',})
             print "*** compiling the NSIS setup script ***"
             from ctypes import windll
-            res = windll.shell32.ShellExecuteA(0, "compile", pathname, None, None, 0)
+            operation = 'compile'
+            res = windll.shell32.ShellExecuteA(0, operation, pathname, None, None, 0)
             if res < 32:
-                raise RuntimeError, "ShellExecute failed, error %d" % res
+                raise RuntimeError, 'ShellExecute failed executing "%s %s", error %d' % (
+                    operation, pathname, res)
 
     args['cmdclass']['bdist_nsis'] = bdist_nsis
     args['windows'] = [{
@@ -511,13 +526,19 @@ try:
     }]
     args['options'] = {
         'bdist_nsis': {
-            'includes': ['sip', 'PyQt4._qt'] + [e.name for e in ext_modules],
+            'includes': ['sip'] + [e.name for e in ext_modules],
             'excludes': ['ssl', 'socket', 'bz2'],
             'optimize': 2,
         },
     }
 except ImportError:
     py2exe = None
+
+def find_file_in_path(filename):
+    for include_path in sys.path:
+        file_path = os.path.join(include_path, filename)
+        if os.path.exists(file_path):
+            return file_path
 
 if do_py2app:
     class BuildAPP(py2app):
@@ -529,7 +550,12 @@ if do_py2app:
 
 # FIXME: this should check for the actual command ('install' vs. 'bdist_nsis', 'py2app', ...), not installed libraries
 if py2exe is None and do_py2app is False:
-    args['data_files'].append(('share/icons', ('picard-16.png', 'picard-32.png')))
+    args['data_files'].append(('share/icons/hicolor/16x16/apps', ['resources/images/16x16/picard.png']))
+    args['data_files'].append(('share/icons/hicolor/24x24/apps', ['resources/images/24x24/picard.png']))
+    args['data_files'].append(('share/icons/hicolor/32x32/apps', ['resources/images/32x32/picard.png']))
+    args['data_files'].append(('share/icons/hicolor/48x48/apps', ['resources/images/48x48/picard.png']))
+    args['data_files'].append(('share/icons/hicolor/128x128/apps', ['resources/images/128x128/picard.png']))
+    args['data_files'].append(('share/icons/hicolor/256x256/apps', ['resources/images/256x256/picard.png']))
     args['data_files'].append(('share/applications', ('picard.desktop',)))
 
 

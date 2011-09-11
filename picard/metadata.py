@@ -21,7 +21,7 @@ import re
 import unicodedata
 from picard.plugin import ExtensionPoint
 from picard.similarity import similarity, similarity2
-from picard.util import format_time
+from picard.util import format_time, load_release_type_scores
 
 
 class Metadata(object):
@@ -78,6 +78,71 @@ class Metadata(object):
         #print "******", reduce(lambda x, y: x + y[0] * y[1] / total, parts, 0.0)
         return reduce(lambda x, y: x + y[0] * y[1] / total, parts, 0.0)
 
+    def compare_to_release(self, release, weights, config):
+        total = 0.0
+        parts = []
+
+        if "album" in self:
+            b = release.title[0].text
+            parts.append((similarity2(self["album"], b), weights["album"]))
+            total += weights["album"]
+
+        if "totaltracks" in self:
+            a = int(self["totaltracks"])
+            if "title" in weights:
+                b = int(release.medium_list[0].medium[0].track_list[0].count)
+            else:
+                b = int(release.medium_list[0].track_count[0].text)
+            if a > b:
+                score = 0.0
+            elif a < b:
+                score = 0.3
+            else:
+                score = 1.0
+            parts.append((score, weights["totaltracks"]))
+            total += weights["totaltracks"]
+
+        preferred_countries = config.setting["preferred_release_countries"].split("  ")
+        preferred_formats = config.setting["preferred_release_formats"].split("  ")
+
+        total_countries = len(preferred_countries)
+        if total_countries:
+            score = 0.0
+            if "country" in release.children:
+                try:
+                    i = preferred_countries.index(release.country[0].text)
+                    score = float(total_countries - i) / float(total_countries)
+                except ValueError:
+                    pass
+            parts.append((score, weights["releasecountry"]))
+
+        total_formats = len(preferred_formats)
+        if total_formats:
+            score = 0.0
+            subtotal = 0
+            for medium in release.medium_list[0].medium:
+                if "format" in medium.children:
+                    try:
+                        i = preferred_formats.index(medium.format[0].text)
+                        score += float(total_formats - i) / float(total_formats)
+                    except ValueError:
+                        pass
+                    subtotal += 1
+            if subtotal > 0: score /= subtotal
+            parts.append((score, weights["format"]))
+
+        if "releasetype" in weights:
+            type_scores = load_release_type_scores(config.setting["release_type_scores"])
+            if 'release_group' in release.children and 'type' in release.release_group[0].attribs:
+                release_type = release.release_group[0].type
+                score = type_scores.get(release_type, type_scores.get('Other', 0.5))
+            else:
+                score = 0.0
+            parts.append((score, weights["releasetype"]))
+            total += weights["releasetype"]
+
+        return (total, parts)
+
     def copy(self, other):
         self._items = {}
         for key, values in other.rawitems():
@@ -111,7 +176,9 @@ class Metadata(object):
     def __set(self, name, values):
         if not isinstance(values, list):
             values = [values]
-        self._items[name] = values
+        values = [v for v in values if v or v == 0]
+        if len(values):
+            self._items[name] = values
 
     def getall(self, name):
         try:
@@ -133,7 +200,8 @@ class Metadata(object):
         self.changed = True
 
     def add(self, name, value):
-        self._items.setdefault(name, []).append(value)
+        if value or value == 0:
+            self._items.setdefault(name, []).append(value)
 
     def keys(self):
         return self._items.keys()
@@ -171,6 +239,13 @@ class Metadata(object):
     def set_changed(self, changed=True):
         self.changed = changed
 
+    def apply_func(self, func):
+        new = Metadata()
+        for key, values in self.rawitems():
+            if not key.startswith("~"):
+                new[key] = map(func, values)
+        self.update(new)
+
     def strip_whitespace(self):
         """Strip leading/trailing whitespace.
 
@@ -182,11 +257,7 @@ class Metadata(object):
         >>> m["foo"]
         "bar"
         """
-        new = Metadata()
-        for key, values in self.rawitems():
-            if not key.startswith("~"):
-                new[key] = [value.strip() for value in values]
-        self.update(new)
+        self.apply_func(lambda s: s.strip())
 
 
 _album_metadata_processors = ExtensionPoint()

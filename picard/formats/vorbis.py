@@ -40,10 +40,10 @@ class VCommentFile(File):
         for origname, values in file.tags.items():
             for value in values:
                 name = origname
-                if name == "date":
+                if name == "date" or name == "originaldate":
                     # YYYY-00-00 => YYYY
                     value = sanitize_date(value)
-                elif name == 'performer':
+                elif name == 'performer' or name == 'comment':
                     # transform "performer=Joe Barr (Piano)" to "performer:Piano=Joe Barr"
                     name += ':'
                     if value.endswith(')'):
@@ -51,20 +51,33 @@ class VCommentFile(File):
                         if start > 0:
                             name += value[start + 2:-1]
                             value = value[:start]
+                elif name.startswith('rating'):
+                    try: name, email = name.split(':', 1)
+                    except ValueError: email = ''
+                    if email != self.config.setting['rating_user_email']:
+                        continue
+                    name = '~rating'
+                    value = unicode(int(round((float(value) * (self.config.setting['rating_steps'] - 1)))))
                 elif name == "fingerprint" and value.startswith("MusicMagic Fingerprint"):
                     name = "musicip_fingerprint"
                     value = value[22:]
                 elif name == "tracktotal" and "totaltracks" not in file.tags:
                     name = "totaltracks"
+                elif name == "metadata_block_picture":
+                    image = mutagen.flac.Picture(base64.standard_b64decode(value))
+                    metadata.add_image(image.mime, image.data)
+                    continue
                 metadata.add(name, value)
         if self._File == mutagen.flac.FLAC:
             for image in file.pictures:
                 metadata.add_image(image.mime, image.data)
-        try:
-            for index, data in enumerate(file["COVERART"]):
-                metadata.add_image(file["COVERARTMIME"][index], base64.standard_b64decode(data))
-        except KeyError:
-            pass
+        # Read the unofficial COVERART tags, for backward compatibillity only
+        if not "metadata_block_picture" in file.tags:
+            try:
+                for index, data in enumerate(file["COVERART"]):
+                    metadata.add_image(file["COVERARTMIME"][index], base64.standard_b64decode(data))
+            except KeyError:
+                pass
         self._info(metadata, file)
         return metadata
 
@@ -82,12 +95,19 @@ class VCommentFile(File):
             file.clear_pictures()
         tags = {}
         for name, value in metadata.items():
+            if name == '~rating':
+                # Save rating according to http://code.google.com/p/quodlibet/wiki/Specs_VorbisComments
+                if settings['rating_user_email']:
+                    name = 'rating:%s' % settings['rating_user_email']
+                else:
+                    name = 'rating'
+                value = unicode(float(value) / (settings['rating_steps'] - 1))
             # don't save private tags
-            if name.startswith("~"):
+            elif name.startswith("~"):
                 continue
             if name.startswith('lyrics:'):
                 name = 'lyrics'
-            elif name == "date":
+            elif name == "date" or name == "originaldate":
                 # YYYY-00-00 => YYYY
                 value = sanitize_date(value)
             elif name.startswith('performer:') or name.startswith('comment:'):
@@ -99,17 +119,23 @@ class VCommentFile(File):
                 name = "fingerprint"
                 value = "MusicMagic Fingerprint%s" % value
             tags.setdefault(name.upper().encode('utf-8'), []).append(value)
+        
+        if "totaltracks" in metadata:
+            tags.setdefault(u"TRACKTOTAL", []).append(metadata["totaltracks"])
+        if "totaldiscs" in metadata:
+            tags.setdefault(u"DISCTOTAL", []).append(metadata["totaldiscs"])
+        
         if settings['save_images_to_tags']:
             for mime, data in metadata.images:
+                image = mutagen.flac.Picture()
+                image.type = 3 # Cover image
+                image.data = data
+                image.mime = mime
                 if self._File == mutagen.flac.FLAC:
-                   image = mutagen.flac.Picture()
-                   image.type = 3 # Cover image
-                   image.data = data
-                   image.mime = mime
-                   file.add_picture(image)
+                    file.add_picture(image)
                 else:
-                   tags.setdefault("COVERART", []).append(base64.standard_b64encode(data))
-                   tags.setdefault("COVERARTMIME", []).append(mime)
+                    tags.setdefault(u"METADATA_BLOCK_PICTURE", []).append(
+                        base64.standard_b64encode(image.write()))
         file.tags.update(tags)
         kwargs = {}
         if self._File == mutagen.flac.FLAC and settings["remove_id3_from_flac"]:

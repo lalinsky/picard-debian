@@ -82,6 +82,7 @@ class ID3File(File):
         'TEXT': 'lyricist',
         'TCMP': 'compilation',
         'TDRC': 'date',
+        'TDOR': 'originaldate',
         'COMM': 'comment',
         'TMOO': 'mood',
         'TMED': 'media',
@@ -94,6 +95,7 @@ class ID3File(File):
         'TSOP': 'artistsort',
         'TSOT': 'titlesort',
         'TPUB': 'label',
+        'TLAN': 'language',
     }
     __rtranslate = dict([(v, k) for k, v in __translate.iteritems()])
 
@@ -105,8 +107,11 @@ class ID3File(File):
         'MusicBrainz Album Status': 'releasestatus',
         'MusicBrainz TRM Id': 'musicbrainz_trmid',
         'MusicBrainz Disc Id': 'musicbrainz_discid',
+        'MusicBrainz Work Id': 'musicbrainz_workid',
+        'MusicBrainz Release Group Id': 'musicbrainz_releasegroupid',
         'MusicBrainz Album Release Country': 'releasecountry',
         'MusicIP PUID': 'musicip_puid',
+        'SCRIPT': 'script',
         'ALBUMARTISTSORT': 'albumartistsort',
         'CATALOGNUMBER': 'catalognumber',
         'BARCODE': 'barcode',
@@ -161,7 +166,10 @@ class ID3File(File):
                 for text in frame.text:
                     metadata.add(name, unicode(text))
             elif frameid == 'USLT':
-                metadata.add('lyrics:' + frame.desc, unicode(frame.text))
+                name = 'lyrics'
+                if frame.desc:
+                    name += frame.desc
+                metadata.add(name, unicode(frame.text))
             elif frameid == 'UFID' and frame.owner == 'http://musicbrainz.org':
                 metadata['musicbrainz_trackid'] = unicode(frame.data)
             elif frameid == 'TRCK':
@@ -178,6 +186,11 @@ class ID3File(File):
                     metadata['discnumber'] = value[0]
             elif frameid == 'APIC':
                 metadata.add_image(frame.mime, frame.data)
+            elif frameid == 'POPM':
+                # Rating in ID3 ranges from 0 to 255, normalize this to the range 0 to 5
+                if frame.email == self.config.setting['rating_user_email']:
+                    rating = unicode(int(round(frame.rating / 255.0 * (self.config.setting['rating_steps'] - 1))))
+                    metadata.add('~rating', rating)
 
         if 'date' in metadata:
             metadata['date'] = sanitize_date(metadata.getall('date')[0])
@@ -195,7 +208,7 @@ class ID3File(File):
 
         if settings['clear_existing_tags']:
             tags.clear()
-        if settings['remove_images_from_tags']:
+        if settings['save_images_to_tags'] and metadata.images:
             tags.delall('APIC')
 
         if settings['write_id3v1']:
@@ -234,7 +247,11 @@ class ID3File(File):
                     tmcl.people.append([role, value])
             elif name.startswith('comment:'):
                 desc = name.split(':', 1)[1]
-                tags.add(id3.COMM(encoding=encoding, desc=desc, text=values))
+                if desc.lower()[:4]=="itun":
+                    tags.delall('COMM:' + desc)
+                    tags.add(id3.COMM(encoding=0, desc=desc, lang='eng', text=[v+u'\x00' for v in values]))
+                else:
+                    tags.add(id3.COMM(encoding=encoding, desc=desc, lang='eng', text=values))
             elif name.startswith('lyrics:') or name == 'lyrics':
                 if ':' in name:
                     desc = name.split(':', 1)[1]
@@ -247,6 +264,18 @@ class ID3File(File):
                     tipl.people.append([self.__rtipl_roles[name], value])
             elif name == 'musicbrainz_trackid':
                 tags.add(id3.UFID(owner='http://musicbrainz.org', data=str(values[0])))
+            elif name == '~rating':
+                # Search for an existing POPM frame to get the current playcount
+                for frame in tags.values():
+                    if frame.FrameID == 'POPM' and frame.email == settings['rating_user_email']:
+                        count = getattr(frame, 'count', 0)
+                        break
+                else:
+                    count = 0
+
+                # Convert rating to range between 0 and 255
+                rating = int(round(float(values[0]) * 255 / (settings['rating_steps'] - 1)))
+                tags.add(id3.POPM(email=settings['rating_user_email'], rating=rating, count=count))
             elif name in self.__rtranslate:
                 frameid = self.__rtranslate[name]
                 if frameid.startswith('W'):
